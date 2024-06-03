@@ -1,0 +1,36 @@
+.program ws2812b 
+.side_set 1 opt
+
+    pull block                  side 0
+    ;get rid of the first 8 bits
+    out null, 8
+output_data:
+    set pins, 1
+    out pins, 1
+    jmp !osre, output_data      side 0 
+
+
+% c-sdk {
+#include "hardware/gpio.h"
+#include "hardware/clocks.h"
+static inline void ws2812b_program_init(PIO pio, uint sm, uint pin_data, uint offset) {
+    pio_sm_config c = ws2812b_program_get_default_config(offset);
+
+    pio_gpio_init(pio, pin_data);
+    
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_data, 1, true);
+
+    sm_config_set_out_pins(&c, pin_data, 1);
+    sm_config_set_set_pins(&c, pin_data, 1);
+    sm_config_set_sideset_pins(&c, pin_data);
+          
+    sm_config_set_out_shift(&c, false, false, 32);
+    //very close to 400ns per command
+    float clk_div = (float)clock_get_hz(clk_sys) / (2500000);
+    sm_config_set_clkdiv(&c, clk_div);
+	pio_sm_init(pio, sm, offset, &c);
+	pio_sm_set_enabled(pio, sm, true);
+
+}
+
+%}

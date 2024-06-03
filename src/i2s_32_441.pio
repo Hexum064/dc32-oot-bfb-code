@@ -1,0 +1,77 @@
+.program i2s_32_441
+.side_set 2 opt
+
+
+    set x, 0
+    ;setting x because it is used for the pull value when fifo is empty
+    ;this is why y is used for the rest of the counting
+.wrap_target
+
+
+;sideset: bit 1 = frame, bit 0 = clock
+
+    ;last bit of previous sample is already valid
+    ;fill y with 14 leave the clock, for timing reasons
+    set y, 14           side 0b00   [0]
+    
+    ;load OSR and set clock high. frame should already be low
+    pull noblock          side 0b01   [1]
+
+    ;output 15 bits of new sample with valid clock pulses
+left_bits:
+    ;clock should be low when data is set
+    out pins, 1         side 0b00   [1]
+    ;data is valid now, so set clock high
+    jmp y--, left_bits  side 0b01   [1]
+
+    ;load 16th bit and pull clock low and frame high
+    out pins, 1         side 0b10   [1]
+    ;set y to 14 and pull clock high
+    set y, 14           side 0b11   [1]
+
+    ;output 15 more bits of current sample with valid i2s_32_441
+    ;frame should be high for first 15 bits
+right_bits:
+    ;clock should be low when data is set
+    out pins, 1         side 0b10   [1]
+    ;data is valid now, so set clock high
+    jmp y--, right_bits  side 0b11  [1]
+
+    ;load 16th bit and pull clock low and frame low
+    out pins, 1         side 0b00   [0]
+
+    
+    ;wrap
+.wrap
+
+% c-sdk {
+#include "hardware/gpio.h"
+#include "hardware/clocks.h"
+static inline void i2s_32_441_program_init(PIO pio, uint sm, uint pin_bclk, uint pin_data, uint pin_frame, uint offset) {
+    pio_sm_config c = i2s_32_441_program_get_default_config(offset);
+
+    pio_gpio_init(pio, pin_bclk);
+    pio_gpio_init(pio, pin_data);
+    pio_gpio_init(pio, pin_frame);
+    
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_data, 1, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_bclk, 1, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_frame, 1, true);
+
+    sm_config_set_out_pins(&c, pin_data, 1);
+    sm_config_set_set_pins(&c, pin_data, 1);
+
+    sm_config_set_sideset_pins(&c, pin_frame);
+    sm_config_set_sideset_pins(&c, pin_bclk);
+    
+        
+    sm_config_set_out_shift(&c, false, false, 32);
+
+    float clk_div = (float)clock_get_hz(clk_sys) / (1411200 * 4);
+    sm_config_set_clkdiv(&c, clk_div);
+	pio_sm_init(pio, sm, offset, &c);
+	pio_sm_set_enabled(pio, sm, true);
+
+}
+
+%}
