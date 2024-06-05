@@ -1,0 +1,24 @@
+Modes: Freeplay/standby and OOT song Mode
+    -Also plays nyan when a combo of first and last note buttons are pushed at the same time
+        -Continues to play until another note button or the mode button is pressed
+        -Does not change the mode but will stop a song that is playing
+Buttons: Touch buttons play 5 different notes
+    -Plays the five notes from OOT
+    -Playing another note while an OOT song is playing will stop the song and play the note
+Mode Button: Switches between the two Modes
+    -Easter egg when the mode button is held down: plays the motorola low battery chirp
+        -does not change the mode but will stop a song that is playing
+OOT Mode: Playing a combo of single notes will play a corresponding song if it exists
+    -Error tone is played if the combo does not match anything
+    -Song only plays once OR song repeats (to be decided)
+Triforce LEDs: independent of mode 
+    -PWMs the 3 LEDs with different sequences in a long repeating pattern
+RGB LEDs:
+    -In Freeplay/Standby mode, upper LEDs just show a repeating pattern
+    -In OOT song mode, upper LEDs are off until a song is played or error tone is played
+        -LEDs show in a chasing color gradient specific to the song and stop when the song stops
+    -In either mode, lower LEDs glow with an individual color when the corresponding note button is being pressed
+        -lower LEDs can follow upper when note is not being pressed
+Puzzle? Maybe. TBD
+
+Probably do not need button debounce for note buttons because they will be used with a touch button
