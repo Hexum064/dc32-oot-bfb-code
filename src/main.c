@@ -31,7 +31,7 @@
 #define AUDIO_BUFF_COUNT 2
 #define AUDIO_BUFF_SIZE 1024UL // Size of max Ocarina
 #define MAX_VOL 254
-#define VOL_AVG 8
+#define VOL_AVG 32
 
 #define ADC_VOL_GPIO 26
 
@@ -58,6 +58,7 @@
 
 #define RGB_LEDS_GPIO 13
 
+// TODO: remove, not in use
 #define PWM_CYCLES_LONG 10000UL
 #define PWM_CYCLES_MED 5000UL
 #define PWM_CYCLES_SHORT 1000UL
@@ -68,12 +69,18 @@
 #define FIRST_NYAN_NOTE 0
 #define SECOND_NYAN_NOTE 4
 
+#define PWM_INITIAL_DELAY_US 4000ULL
+#define PWM_FULL_DUTY_DELAY_US 2000000ULL
+#define SINE_TABLE_SIZE 256
+
 extern uint8_t song_of_storms[];
 extern uint8_t a_loop[];
 extern uint8_t b_loop[];
 extern uint8_t d_loop[];
 extern uint8_t d2_loop[];
 extern uint8_t f_loop[];
+
+const uint16_t chaseLookupTable[] = {0, 0, 0xFFFF};
 
 const uint16_t sineLookupTable[] = {
     0x8000, 0x8327, 0x864e, 0x8974, 0x8c98, 0x8fbb, 0x92db, 0x95f8,
@@ -160,18 +167,136 @@ uint32_t current_sample_len;
 uint32_t current_sample_offset = 0;
 uint8_t audio_dma_channel;
 uint8_t current_volume = 0;
+uint16_t volume_accum = 0;
 uint8_t current_buff_index = 0;
 uint16_t vol_running_avg[VOL_AVG];
-uint8_t vol_avg_index = 0;
+uint8_t vol_avg_count = 0;
 
 dma_channel_config audio_dma_config;
-dma_channel_config pwm_0_dma_config;
-dma_channel_config pwm_1_dma_config;
-dma_channel_config pwm_2_dma_config;
+
+alarm_id_t alarm_id;
+
+uint8_t led_pwm_lookup_index = 0;
+
+alarm_pool_t *core_0_alarm;
 
 uint64_t mode_button_start_time;
 uint64_t note_button_starts[] = {0, 0, 0, 0, 0};
 notes current_note = no_note;
+
+uint32_t pwm_delay = PWM_INITIAL_DELAY_US;
+
+uint8_t pwm_mode_index = 1;
+
+int64_t pwm_mode_0()
+{
+    pwm_set_gpio_level(PWM_LED_0_GPIO, sineLookupTable[(led_pwm_lookup_index + 0x00) % SINE_TABLE_SIZE]);
+    pwm_set_gpio_level(PWM_LED_1_GPIO, sineLookupTable[(led_pwm_lookup_index + 0x55) % SINE_TABLE_SIZE]);
+    pwm_set_gpio_level(PWM_LED_2_GPIO, sineLookupTable[(led_pwm_lookup_index + 0xAA) % SINE_TABLE_SIZE]);
+    led_pwm_lookup_index++;
+
+    if (!led_pwm_lookup_index)
+    {
+        if (pwm_delay > 250)
+        {
+            pwm_delay -= 50;
+        }
+        else
+        {
+#ifdef DEBUG
+            printf("Ending mode 0\n");
+#endif
+            pwm_set_gpio_level(PWM_LED_0_GPIO, 0xFFFF);
+            pwm_set_gpio_level(PWM_LED_1_GPIO, 0xFFFF);
+            pwm_set_gpio_level(PWM_LED_2_GPIO, 0xFFFF);
+            led_pwm_lookup_index = 0;
+            pwm_mode_index = (pwm_mode_index + 1) % 3;
+            pwm_delay = PWM_INITIAL_DELAY_US;
+            return PWM_FULL_DUTY_DELAY_US;
+        }
+    }
+
+    return pwm_delay;
+}
+
+int64_t pwm_mode_1()
+{
+    pwm_set_gpio_level(PWM_LED_0_GPIO, chaseLookupTable[(led_pwm_lookup_index + 0x00) % 3]);
+    pwm_set_gpio_level(PWM_LED_1_GPIO, chaseLookupTable[(led_pwm_lookup_index + 0x01) % 3]);
+    pwm_set_gpio_level(PWM_LED_2_GPIO, chaseLookupTable[(led_pwm_lookup_index + 0x02) % 3]);
+    led_pwm_lookup_index++;
+
+    if (!(led_pwm_lookup_index % 3))
+    {
+        if (pwm_delay > 250)
+        {
+            pwm_delay -= 50;
+        }
+        else
+        {
+#ifdef DEBUG
+            printf("Ending mode 1\n");
+#endif
+            pwm_set_gpio_level(PWM_LED_0_GPIO, 0xFFFF);
+            pwm_set_gpio_level(PWM_LED_1_GPIO, 0xFFFF);
+            pwm_set_gpio_level(PWM_LED_2_GPIO, 0xFFFF);
+            led_pwm_lookup_index = 0;
+            pwm_mode_index = (pwm_mode_index + 1) % 3;
+            pwm_delay = PWM_INITIAL_DELAY_US;
+            return PWM_FULL_DUTY_DELAY_US;
+        }
+    }
+
+    return pwm_delay * 50;
+}
+
+int64_t pwm_mode_2()
+{
+    pwm_set_gpio_level(PWM_LED_0_GPIO, sineLookupTable[(led_pwm_lookup_index)]);
+    pwm_set_gpio_level(PWM_LED_1_GPIO, sineLookupTable[(led_pwm_lookup_index)]);
+    pwm_set_gpio_level(PWM_LED_2_GPIO, sineLookupTable[(led_pwm_lookup_index)]);
+    led_pwm_lookup_index++;
+
+    if (!led_pwm_lookup_index)
+    {
+        if (pwm_delay > 250)
+        {
+            pwm_delay -= 50;
+        }
+        else
+        {
+#ifdef DEBUG
+            printf("Ending mode 2\n");
+#endif
+            pwm_set_gpio_level(PWM_LED_0_GPIO, 0xFFFF);
+            pwm_set_gpio_level(PWM_LED_1_GPIO, 0xFFFF);
+            pwm_set_gpio_level(PWM_LED_2_GPIO, 0xFFFF);
+            pwm_mode_index = (pwm_mode_index + 1) % 3;
+            pwm_delay = PWM_INITIAL_DELAY_US;
+            return PWM_FULL_DUTY_DELAY_US;
+        }
+    }
+
+    return pwm_delay;
+}
+
+int64_t led_pwm_cb(alarm_id_t id, void *user_data)
+{
+    switch (pwm_mode_index)
+    {
+    case 0:
+        return pwm_mode_0();
+    case 1:
+        return pwm_mode_1();
+    case 2:
+        return pwm_mode_2();
+    }
+}
+
+void pwm_update_timer_init()
+{
+    alarm_id = alarm_pool_add_alarm_in_ms(core_0_alarm, pwm_delay, led_pwm_cb, 0, true);
+}
 
 void oot_gpio_init()
 {
@@ -187,13 +312,66 @@ void oot_gpio_init()
     gpio_set_pulls(NOTE_D2_GPIO, false, true);
     gpio_set_pulls(MODE_GPIO, false, true);
 
-    // init dac as input
-
-    // init vol as output
+    // init pwm leds
+    gpio_set_function(PWM_LED_0_GPIO, GPIO_FUNC_PWM);
+    gpio_set_function(PWM_LED_1_GPIO, GPIO_FUNC_PWM);
+    gpio_set_function(PWM_LED_2_GPIO, GPIO_FUNC_PWM);
 
     // init led data pins as output
 
     // init i2s pins as output
+}
+
+void led_pwm_init()
+{
+    core_0_alarm = alarm_pool_create_with_unused_hardware_alarm(5);
+
+    uint slice0 = pwm_gpio_to_slice_num(PWM_LED_0_GPIO);
+    uint slice1 = pwm_gpio_to_slice_num(PWM_LED_1_GPIO);
+    uint slice2 = pwm_gpio_to_slice_num(PWM_LED_2_GPIO);
+
+    pwm_set_gpio_level(PWM_LED_0_GPIO, 0);
+    pwm_set_gpio_level(PWM_LED_1_GPIO, 0);
+    pwm_set_gpio_level(PWM_LED_2_GPIO, 0);
+    pwm_set_enabled(slice0, true);
+    pwm_set_enabled(slice1, true);
+    pwm_set_enabled(slice2, true);
+
+    // Trigger the timers for the pwm
+    pwm_update_timer_init();
+}
+
+void vol_adc_init()
+{
+    adc_init();
+    adc_gpio_init(ADC_VOL_GPIO);
+    adc_select_input(0);
+}
+
+void check_volume()
+{
+    //Use averaging
+    uint8_t volume;
+    volume_accum += (uint16_t)(adc_read() >> 4);
+    vol_avg_count++;
+
+    if (vol_avg_count == VOL_AVG)
+    {
+        volume = (uint8_t)(volume_accum / VOL_AVG);
+        vol_avg_count = 0;
+        volume_accum = 0;
+
+        //and also filter to 2 steps
+        volume -= (volume % 2);
+
+        if (volume != current_volume)
+        {
+            current_volume = volume;
+#ifdef DEBUG
+            printf("New Volume: %d\n", current_volume);
+#endif
+        }
+    }
 }
 
 void change_mode()
@@ -201,14 +379,17 @@ void change_mode()
 
     // currently only two modes so just switch between them
     mode = (mode + 1) % 2;
-
+#ifdef DEBUG
     printf("Changed mode. %d\n", mode);
+#endif
 }
 
 // Update audio and RGB LED output based on current output_state
 void update_oot_output()
 {
+#ifdef DEBUG
     printf("Update output for state: %d\n", output_state);
+#endif
 }
 
 // Only valid for Song mode
@@ -222,12 +403,11 @@ void record_note_played(notes note)
 #ifdef DEBUG
     printf("record note played: %d\n", note);
 #endif
-
 }
 
 void begin_play_note(notes note)
 {
-    //don't need to do anything if we are already playing the note
+    // don't need to do anything if we are already playing the note
     if (note == current_note)
     {
         return;
@@ -247,12 +427,12 @@ void begin_play_note(notes note)
 void stop_sample()
 {
 
-    //housekeeping. clear the note
+    // housekeeping. clear the note
     current_note = no_note;
 
 #ifdef DEBUG
     printf("stop sample\n");
-#endif    
+#endif
     output_state = none;
     update_oot_output();
 }
@@ -328,9 +508,9 @@ void check_note_buttons()
             }
         }
         else
-        {   
-            //For special modes, like nyan mode, we don't want to update
-            //call button state changed until a button is pressed again
+        {
+            // For special modes, like nyan mode, we don't want to update
+            // call button state changed until a button is pressed again
             if (active_note_buttons[i] && output_state != play_nyan)
             {
                 // button was active but now is not so update status
@@ -400,11 +580,12 @@ void check_mode_button()
 }
 
 int main()
-{    
+{
     set_sys_clock_khz(PICO_CLK_KHZ, true);
     stdio_init_all();
     oot_gpio_init();
-    // vol_adc_init();
+    vol_adc_init();
+    led_pwm_init();
 
 #ifdef DEBUG
     sleep_ms(1000);
@@ -416,5 +597,6 @@ int main()
     {
         check_mode_button();
         check_note_buttons();
+        check_volume();
     }
 }
