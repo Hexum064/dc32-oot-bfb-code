@@ -21,4 +21,5 @@ RGB LEDs:
         -lower LEDs can follow upper when note is not being pressed
 Puzzle? Maybe. TBD
 
-Probably do not need button debounce for note buttons because they will be used with a touch button
+MAYBE! Nayn mode is entered from sequence of notes played
+

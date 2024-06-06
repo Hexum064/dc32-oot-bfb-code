@@ -27,7 +27,8 @@
 #define BITS_PER_SAMPLE 32
 #define SPI_CLK_DIVISOR 90
 #define SPI_FREQ (SAMPLE_RATE * BITS_PER_SAMPLE)
-#define PICO_CLK_KHZ 133000UL  // ((SPI_FREQ * SPI_CLK_DIVISOR) / 1000)
+#define PICO_CLK_KHZ 133000UL // ((SPI_FREQ * SPI_CLK_DIVISOR) / 1000)
+#define AUDIO_BUFF_COUNT 2
 #define AUDIO_BUFF_SIZE 1024UL // Size of max Ocarina
 #define MAX_VOL 254
 #define VOL_AVG 8
@@ -41,6 +42,8 @@
 #define PWM_LED_0_GPIO 2
 #define PWM_LED_1_GPIO 3
 #define PWM_LED_2_GPIO 4
+
+#define NOTE_COUNT 5
 
 #define NOTE_D_GPIO 5
 #define NOTE_F_GPIO 6
@@ -61,6 +64,9 @@
 
 #define DEBOUNCE_US 50000ULL
 #define MODE_HOLD_US 4000000ULL
+
+#define FIRST_NYAN_NOTE 0
+#define SECOND_NYAN_NOTE 4
 
 extern uint8_t song_of_storms[];
 extern uint8_t a_loop[];
@@ -118,25 +124,34 @@ typedef enum badge_mode
 typedef enum badge_output_state
 {
     none,
-    nyan,
+    play_nyan,
     battery_low,
+    play_note,
+    play_error,
+    play_song,
+    extra_song
+} badge_output_state;
+
+// Leave no_note at the end so the notes are 0-based
+// and can be used as indexes
+typedef enum notes
+{
     note_d,
     note_f,
     note_a,
     note_b,
     note_d2,
-    error_song,
-    oot_song,
-    extra_song
-} badge_output_state;
+    no_note
+} notes;
 
-badge_mode mode;
-badge_output_state output_state;
+badge_mode mode = freeplay;
+badge_output_state output_state = none;
+bool active_note_buttons[] = {false, false, false, false, false};
 
 bool nayn_playing = false;
 bool battery_low_playing = false;
 
-audio_buff_t audio_buffs[2];
+audio_buff_t audio_buffs[AUDIO_BUFF_COUNT];
 
 // Maybe create a struct
 // TODO: Remove unused
@@ -154,18 +169,14 @@ dma_channel_config pwm_0_dma_config;
 dma_channel_config pwm_1_dma_config;
 dma_channel_config pwm_2_dma_config;
 
-bool mode_button_down;
-uint64_t mode_button_time_start;
+uint64_t mode_button_start_time;
+uint64_t note_button_starts[] = {0, 0, 0, 0, 0};
+notes current_note = no_note;
 
 void oot_gpio_init()
 {
     // init buttons as input
-    uint32_t mask = (1 << NOTE_D_GPIO)
-        | (1 << NOTE_F_GPIO)
-        | (1 << NOTE_A_GPIO)
-        | (1 << NOTE_B_GPIO)
-        | (1 << NOTE_D2_GPIO)
-        | (1 << MODE_GPIO);
+    uint32_t mask = (1 << NOTE_D_GPIO) | (1 << NOTE_F_GPIO) | (1 << NOTE_A_GPIO) | (1 << NOTE_B_GPIO) | (1 << NOTE_D2_GPIO) | (1 << MODE_GPIO);
 
     gpio_set_dir_in_masked(mask);
 
@@ -175,7 +186,6 @@ void oot_gpio_init()
     gpio_set_pulls(NOTE_B_GPIO, false, true);
     gpio_set_pulls(NOTE_D2_GPIO, false, true);
     gpio_set_pulls(MODE_GPIO, false, true);
-    
 
     // init dac as input
 
@@ -189,30 +199,161 @@ void oot_gpio_init()
 void change_mode()
 {
 
-    //currently only two modes so just switch between them
+    // currently only two modes so just switch between them
     mode = (mode + 1) % 2;
 
     printf("Changed mode. %d\n", mode);
-
 }
 
 // Update audio and RGB LED output based on current output_state
 void update_oot_output()
 {
     printf("Update output for state: %d\n", output_state);
+}
 
+// Only valid for Song mode
+void record_note_played(notes note)
+{
+    if (mode != song)
+    {
+        return;
+    }
+
+#ifdef DEBUG
+    printf("record note played: %d\n", note);
+#endif
+
+}
+
+void begin_play_note(notes note)
+{
+    //don't need to do anything if we are already playing the note
+    if (note == current_note)
+    {
+        return;
+    }
+
+    current_note = note;
+
+#ifdef DEBUG
+    printf("start note %d\n", note);
+#endif
+    output_state = play_note;
+    update_oot_output();
+    record_note_played(note);
+}
+
+// We only play one note or sample at a time so this can end any active audio
+void stop_sample()
+{
+
+    //housekeeping. clear the note
+    current_note = no_note;
+
+#ifdef DEBUG
+    printf("stop sample\n");
+#endif    
+    output_state = none;
+    update_oot_output();
+}
+
+void note_buttons_state_changed()
+{
+
+    printf("Button State: D: %s, F: %s, A: %s, B: %s, D2: %s\n",
+           (active_note_buttons[0] ? "t" : "f"),
+           (active_note_buttons[1] ? "t" : "f"),
+           (active_note_buttons[2] ? "t" : "f"),
+           (active_note_buttons[3] ? "t" : "f"),
+           (active_note_buttons[4] ? "t" : "f"));
+
+    // Here, we can do something else based on a combo of keys pressed.
+    // Right now, only nyan mode is available
+
+    if (active_note_buttons[FIRST_NYAN_NOTE] && active_note_buttons[SECOND_NYAN_NOTE])
+    {
+        output_state = play_nyan;
+        update_oot_output();
+        return;
+    }
+
+    // Select which note to play based on note priority (0 to 4)
+    for (uint8_t i = 0; i < NOTE_COUNT; i++)
+    {
+        if (active_note_buttons[i])
+        {
+            begin_play_note(i);
+            return;
+        }
+    }
+
+    // if we reached here, no note was active
+    stop_sample();
+}
+
+// converts the pressed button GPIOs into an 8-bit mask
+// that starts at bit 0 for note 0 (based on the notes enum)
+uint8_t get_note_buttons()
+{
+    uint32_t highs = gpio_get_all();
+    uint8_t buttons = 0;
+
+    // bitwise AND the highs with a 1 shifted left by the number of the GPIO
+    // This will return a single bit set if the GPIO is high. Then move that
+    // bit back to pos 0 with a right-shift by the GPIO number - the note number.
+
+    buttons |= ((highs & (1 << NOTE_D_GPIO)) >> (NOTE_D_GPIO - note_d)) | ((highs & (1 << NOTE_F_GPIO)) >> (NOTE_F_GPIO - note_f)) | ((highs & (1 << NOTE_A_GPIO)) >> (NOTE_A_GPIO - note_a)) | ((highs & (1 << NOTE_B_GPIO)) >> (NOTE_B_GPIO - note_b)) | ((highs & (1 << NOTE_D2_GPIO)) >> (NOTE_D2_GPIO - note_d2));
+
+    return buttons;
+}
+
+void check_note_buttons()
+{
+    uint8_t buttons = get_note_buttons();
+    uint8_t i = NOTE_COUNT;
+
+    while (i--)
+    {
+        if (buttons & (1 << i))
+        {
+            if (!note_button_starts[i])
+            {
+                note_button_starts[i] = time_us_64();
+            }
+
+            if (!active_note_buttons[i] && (time_us_64() - note_button_starts[i]) > DEBOUNCE_US)
+            {
+                active_note_buttons[i] = true;
+                note_buttons_state_changed();
+            }
+        }
+        else
+        {   
+            //For special modes, like nyan mode, we don't want to update
+            //call button state changed until a button is pressed again
+            if (active_note_buttons[i] && output_state != play_nyan)
+            {
+                // button was active but now is not so update status
+                active_note_buttons[i] = false;
+                note_buttons_state_changed();
+            }
+
+            active_note_buttons[i] = false;
+            note_button_starts[i] = 0;
+        }
+    }
 }
 
 void check_mode_button()
 {
     if (gpio_get(MODE_GPIO))
     {
-        if (!mode_button_time_start)
+        if (!mode_button_start_time)
         {
-            mode_button_time_start = time_us_64();
+            mode_button_start_time = time_us_64();
         }
-        
-        if ((time_us_64() - mode_button_time_start) > MODE_HOLD_US && output_state != battery_low)
+
+        if ((time_us_64() - mode_button_start_time) > MODE_HOLD_US && output_state != battery_low)
         {
 
             // button has been held for hold time. Start Motorola Battery Low sample playing
@@ -222,8 +363,8 @@ void check_mode_button()
     }
     else // Button is not down
     {
-        //a time start of 0 indicates no button press so do nothing
-        if (!mode_button_time_start)
+        // a time start of 0 indicates no button press so do nothing
+        if (!mode_button_start_time)
         {
             return;
         }
@@ -231,13 +372,20 @@ void check_mode_button()
         // If the battery_low state is playing, turn it off
         if (output_state == battery_low)
         {
+#ifdef DEBUG
+            printf("mode button long hold released\n");
+#endif
             output_state = none;
             update_oot_output();
         }
-        else if ((time_us_64() - mode_button_time_start) > DEBOUNCE_US)
+        else if ((time_us_64() - mode_button_start_time) > DEBOUNCE_US)
         {
             // if we get here, we were not playing the battery low sound
             // and we passed the debounce, so change modes
+
+#ifdef DEBUG
+            printf("mode button debounced\n");
+#endif
 
             change_mode();
 
@@ -247,23 +395,19 @@ void check_mode_button()
         }
 
         // Always reset the time start
-        mode_button_time_start = 0;
+        mode_button_start_time = 0;
     }
 }
 
-void check_note_buttons()
-{
-}
-
 int main()
-{
+{    
     set_sys_clock_khz(PICO_CLK_KHZ, true);
     stdio_init_all();
     oot_gpio_init();
     // vol_adc_init();
 
-#ifdef DEBUG    
-    sleep_ms(4000);
+#ifdef DEBUG
+    sleep_ms(1000);
 #endif
 
     printf("OOT Pico Badge Started\n");
