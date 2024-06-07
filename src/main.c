@@ -32,6 +32,8 @@
 #define AUDIO_BUFF_SIZE 1024UL // Size of max Ocarina
 #define MAX_VOL 254
 #define VOL_AVG 32
+#define AUDIO_STATEMACHINE 0
+#define AUDIO_DMA_DREQ DREQ_PIO0_TX0
 
 #define ADC_VOL_GPIO 26
 
@@ -56,12 +58,11 @@
 #define MODE_LED_0_GPIO 11
 #define MODE_LED_1_GPIO 12
 
-#define RGB_LEDS_GPIO 13
-
-// TODO: remove, not in use
-#define PWM_CYCLES_LONG 10000UL
-#define PWM_CYCLES_MED 5000UL
-#define PWM_CYCLES_SHORT 1000UL
+#define RGB_LED_GPIO 13
+#define RGB_LED_COUNT 29
+#define RGB_LED_STATEMACHINE 1
+#define RGB_LED_UPDATE_DELAY_MS 50
+#define RGB_LED_DMA_DREQ DREQ_PIO0_TX1
 
 #define DEBOUNCE_US 50000ULL
 #define MODE_HOLD_US 4000000ULL
@@ -73,13 +74,18 @@
 #define PWM_FULL_DUTY_DELAY_US 2000000ULL
 #define SINE_TABLE_SIZE 256
 
+#define PIO pio0
+
 extern uint8_t song_of_storms[];
 extern uint8_t a_loop[];
 extern uint8_t b_loop[];
 extern uint8_t d_loop[];
 extern uint8_t d2_loop[];
 extern uint8_t f_loop[];
+extern uint8_t nyan_cat[];
+extern uint8_t low_battery_chirp[];
 
+const uint8_t *note_samples[] = {d_loop, f_loop, a_loop, b_loop, d2_loop};
 const uint16_t chaseLookupTable[] = {0, 0, 0xFFFF};
 
 const uint16_t sineLookupTable[] = {
@@ -165,7 +171,7 @@ audio_buff_t audio_buffs[AUDIO_BUFF_COUNT];
 uint8_t *current_sample;
 uint32_t current_sample_len;
 uint32_t current_sample_offset = 0;
-uint8_t audio_dma_channel;
+uint32_t current_sample_loop_offset = 0;
 uint8_t current_volume = 0;
 uint16_t volume_accum = 0;
 uint8_t current_buff_index = 0;
@@ -173,6 +179,7 @@ uint16_t vol_running_avg[VOL_AVG];
 uint8_t vol_avg_count = 0;
 
 dma_channel_config audio_dma_config;
+int audio_dma_channel_number;
 
 alarm_id_t alarm_id;
 
@@ -187,6 +194,11 @@ notes current_note = no_note;
 uint32_t pwm_delay = PWM_INITIAL_DELAY_US;
 
 uint8_t pwm_mode_index = 1;
+
+uint32_t rgb_leds[RGB_LED_COUNT];
+repeating_timer_t rgb_led_timer;
+dma_channel_config rgb_led_dma_config;
+int rgb_led_dma_channel_number;
 
 int64_t pwm_mode_0()
 {
@@ -298,6 +310,132 @@ void pwm_update_timer_init()
     alarm_id = alarm_pool_add_alarm_in_ms(core_0_alarm, pwm_delay, led_pwm_cb, 0, true);
 }
 
+bool rgb_leds_update_cb(repeating_timer_t *rt)
+{
+
+    // TEST CODE
+    static uint8_t blue = 0;
+    for (uint i = 0; i < RGB_LED_COUNT; i++)
+    {
+        rgb_leds[i] = 0x00003F00 + (blue % 128);
+    }
+    blue++;
+    // END TEST
+
+    if (output_state == play_note && current_note != no_note)
+    {
+        //clear the last n LEDs
+        for (uint8_t i = 0; i < NOTE_COUNT; i++)
+        {
+            rgb_leds[RGB_LED_COUNT - i - 1] = 0;
+        }
+
+        //then set one for the specific note
+
+        switch (current_note)
+        {
+        case note_d:
+            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00008000; //red
+            break;
+         case note_f:
+            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00308000; //yellow
+            break;
+        case note_a:
+            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00800000; //green
+            break;
+        case note_b:
+            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00000080; //blue
+            break;
+        case note_d2:
+            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00008080; //purple
+            break;
+        }
+    }
+
+    // TODO: Update RGB LED array and init DMA to transfer to  ws2812b PIO
+    // Will need to check for mode, sample playing, and note playing
+    dma_channel_configure(
+        rgb_led_dma_channel_number,
+        &rgb_led_dma_config,
+        &pio0_hw->txf[RGB_LED_STATEMACHINE], // Write address (only need to set this once)
+        rgb_leds,
+        RGB_LED_COUNT,
+        true);
+
+    return true;
+}
+
+// Loads the sample data, upconverts from 22.05K to 44.1K
+// Only loads the left channel with data. Leave right at 0
+// Returns true if a buffer was loaded
+void load_audio_buffer(uint8_t *src, uint32_t src_len, uint32_t *src_offset, audio_buff_t *buff, uint8_t volume)
+{
+
+    if (!(output_state == play_note || output_state == play_nyan || output_state == battery_low))
+    {
+        buff->length = 0;
+        return;
+    }
+
+    buff->length = (*src_offset + AUDIO_BUFF_SIZE) >= src_len ? (src_len - *src_offset) + 4 : AUDIO_BUFF_SIZE;
+    uint32_t data;
+
+    for (uint32_t i = 0; i < buff->length; i++)
+    {
+        int16_t s = (int16_t)(src[*src_offset + i] - 0x7F);
+        data = (uint32_t)(s * volume) << 16;
+
+        // This double load upconverts from 22.05k to 44.1K
+        buff->buffer[i * 2] = data;
+        buff->buffer[(i * 2) + 1] = data;
+    }
+
+    (*src_offset) += buff->length;
+}
+
+void audio_dma_start(int dma_channel, audio_buff_t *buff)
+{
+
+    dma_channel_configure(
+        dma_channel,
+        &audio_dma_config,
+        &pio0_hw->txf[AUDIO_STATEMACHINE], // Write address (only need to set this once)
+        buff->buffer,                      // Don't provide a read address yet
+        buff->length * 2,                  // len is doubled because we upconverted
+        true                               // Don't start yet
+    );
+}
+
+void audio_dma_isr()
+{
+
+    // Clear the interrupt request.
+    dma_hw->ints0 = 1u << audio_dma_channel_number;
+
+    if (!(output_state == play_note || output_state == play_nyan || output_state == battery_low))
+    {
+        return;
+    }
+
+    // if the buffer to be output next has a len of 0, we are done
+    if (audio_buffs[current_buff_index % 2].length > 0)
+    {
+        // start the next output and load the next buffer
+        audio_dma_start(audio_dma_channel_number, audio_buffs + (current_buff_index % 2));
+    }
+
+    current_buff_index++; // ok to wrap back to 0
+    load_audio_buffer(current_sample, current_sample_len, &current_sample_offset, audio_buffs + (current_buff_index % 2), current_volume);
+
+    if (audio_buffs[current_buff_index % 2].length == 0)
+    {
+        // Auto restart
+        //  printf("Auto Restart\n");
+        current_sample_offset = current_sample_loop_offset + 4;
+        load_audio_buffer(current_sample, current_sample_len, &current_sample_offset, audio_buffs + (current_buff_index % 2), current_volume);
+    }
+}
+
 void oot_gpio_init()
 {
     // init buttons as input
@@ -322,10 +460,13 @@ void oot_gpio_init()
     // init i2s pins as output
 }
 
-void led_pwm_init()
+void alarm_pool_init()
 {
     core_0_alarm = alarm_pool_create_with_unused_hardware_alarm(5);
+}
 
+void led_pwm_init()
+{
     uint slice0 = pwm_gpio_to_slice_num(PWM_LED_0_GPIO);
     uint slice1 = pwm_gpio_to_slice_num(PWM_LED_1_GPIO);
     uint slice2 = pwm_gpio_to_slice_num(PWM_LED_2_GPIO);
@@ -348,9 +489,61 @@ void vol_adc_init()
     adc_select_input(0);
 }
 
+void rgb_leds_init()
+{
+    uint ws2812b_offset = pio_add_program(PIO, &ws2812b_program);
+    ws2812b_program_init(PIO, RGB_LED_STATEMACHINE, RGB_LED_GPIO, ws2812b_offset);
+
+    rgb_led_dma_channel_number = dma_claim_unused_channel(true);
+    rgb_led_dma_config = dma_channel_get_default_config(rgb_led_dma_channel_number);
+    channel_config_set_transfer_data_size(&rgb_led_dma_config, DMA_SIZE_32);
+    channel_config_set_read_increment(&rgb_led_dma_config, true);
+    channel_config_set_write_increment(&rgb_led_dma_config, false);
+    channel_config_set_dreq(&rgb_led_dma_config, DREQ_PIO0_TX1);
+
+    alarm_pool_add_repeating_timer_ms(core_0_alarm, RGB_LED_UPDATE_DELAY_MS, rgb_leds_update_cb, 0, &rgb_led_timer);
+}
+
+void audio_irq_init(int channel)
+{
+    dma_channel_set_irq0_enabled(channel, true);
+    irq_set_exclusive_handler(DMA_IRQ_0, audio_dma_isr);
+    irq_set_enabled(DMA_IRQ_0, true);
+}
+
+void audio_init()
+{
+    uint i2s_offset = pio_add_program(PIO, &i2s_32_441_program);
+
+    audio_dma_channel_number = dma_claim_unused_channel(true);
+    audio_dma_config = dma_channel_get_default_config(audio_dma_channel_number);
+    channel_config_set_transfer_data_size(&audio_dma_config, DMA_SIZE_32);
+    channel_config_set_read_increment(&audio_dma_config, true);
+    channel_config_set_write_increment(&audio_dma_config, false);
+    channel_config_set_dreq(&audio_dma_config, DREQ_PIO0_TX0);
+
+    dma_channel_set_irq0_enabled(audio_dma_channel_number, true);
+    irq_set_exclusive_handler(DMA_IRQ_0, audio_dma_isr);
+    i2s_32_441_program_init(PIO, AUDIO_STATEMACHINE, I2S_CLK_GPIO, I2S_DATA_GPIO, I2S_FS_GPIO, i2s_offset);
+
+    audio_irq_init(audio_dma_channel_number);
+}
+
+void set_current_sample(uint8_t *sample)
+{
+    current_sample = sample;
+    current_sample_len = (uint32_t)(current_sample[3] << 24) + (uint32_t)(current_sample[2] << 16) + (uint32_t)(current_sample[1] << 8) + (uint32_t)(current_sample[0] << 0);
+    current_sample_loop_offset = (uint32_t)(current_sample[current_sample_len + 7] << 24) + (uint32_t)(current_sample[current_sample_len + 6] << 16) + (uint32_t)(current_sample[current_sample_len + 5] << 8) + (uint32_t)(current_sample[current_sample_len + 4] << 0);
+    current_sample_offset = 4;
+    current_buff_index = 0;
+#ifdef DEBUG
+    printf("Curr Samp len: %lu (0x%08x). Loop offset: 0x%08x\n", current_sample_len, current_sample_len, current_sample_loop_offset);
+#endif
+}
+
 void check_volume()
 {
-    //Use averaging
+    // Use averaging
     uint8_t volume;
     volume_accum += (uint16_t)(adc_read() >> 4);
     vol_avg_count++;
@@ -361,7 +554,7 @@ void check_volume()
         vol_avg_count = 0;
         volume_accum = 0;
 
-        //and also filter to 2 steps
+        // and also filter to 2 steps
         volume -= (volume % 2);
 
         if (volume != current_volume)
@@ -373,6 +566,15 @@ void check_volume()
         }
     }
 }
+
+void start_sample(uint8_t *sample)
+{
+    set_current_sample(sample);
+    load_audio_buffer(current_sample, current_sample_len, &current_sample_offset, audio_buffs, current_volume);
+    audio_dma_isr();
+}
+
+
 
 void change_mode()
 {
@@ -390,7 +592,39 @@ void update_oot_output()
 #ifdef DEBUG
     printf("Update output for state: %d\n", output_state);
 #endif
+
+    switch (output_state)
+    {
+    case play_nyan:
+        start_sample(nyan_cat);
+        break;
+    case battery_low:
+        start_sample(low_battery_chirp);
+        break;
+    case play_note:
+        start_sample((uint8_t *)(note_samples[current_note]));
+        break;    
+    default:
+        break;
+    }
 }
+
+// We only play one note or sample at a time so this can end any active audio
+void stop_sample()
+{
+
+    // housekeeping. clear the note
+    current_note = no_note;
+
+#ifdef DEBUG
+    printf("stop sample\n");
+#endif
+    output_state = none;
+    update_oot_output();
+
+    dma_channel_abort(audio_dma_channel_number);
+}
+
 
 // Only valid for Song mode
 void record_note_played(notes note)
@@ -413,6 +647,8 @@ void begin_play_note(notes note)
         return;
     }
 
+    //make sure the current sample is stopped
+  
     current_note = note;
 
 #ifdef DEBUG
@@ -423,36 +659,29 @@ void begin_play_note(notes note)
     record_note_played(note);
 }
 
-// We only play one note or sample at a time so this can end any active audio
-void stop_sample()
-{
-
-    // housekeeping. clear the note
-    current_note = no_note;
-
-#ifdef DEBUG
-    printf("stop sample\n");
-#endif
-    output_state = none;
-    update_oot_output();
-}
 
 void note_buttons_state_changed()
 {
 
+#ifdef DEBUG
     printf("Button State: D: %s, F: %s, A: %s, B: %s, D2: %s\n",
            (active_note_buttons[0] ? "t" : "f"),
            (active_note_buttons[1] ? "t" : "f"),
            (active_note_buttons[2] ? "t" : "f"),
            (active_note_buttons[3] ? "t" : "f"),
            (active_note_buttons[4] ? "t" : "f"));
-
+#endif
     // Here, we can do something else based on a combo of keys pressed.
     // Right now, only nyan mode is available
 
     if (active_note_buttons[FIRST_NYAN_NOTE] && active_note_buttons[SECOND_NYAN_NOTE])
     {
+
+#ifdef DEBUG
+        printf("Starting Nyan\n");
+#endif
         output_state = play_nyan;
+        current_note = no_note;
         update_oot_output();
         return;
     }
@@ -583,12 +812,15 @@ int main()
 {
     set_sys_clock_khz(PICO_CLK_KHZ, true);
     stdio_init_all();
+    alarm_pool_init();
     oot_gpio_init();
     vol_adc_init();
     led_pwm_init();
+    rgb_leds_init();
+    audio_init(); // make second core
 
 #ifdef DEBUG
-    sleep_ms(1000);
+    sleep_ms(5000);
 #endif
 
     printf("OOT Pico Badge Started\n");

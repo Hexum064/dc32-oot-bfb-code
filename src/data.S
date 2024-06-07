@@ -10,6 +10,10 @@
 .global d2_loop_end
 .global f_loop
 .global f_loop_end
+.global nyan_cat
+.global nyan_cat_end
+.global low_battery_chirp
+.global low_battery_chirp_end
 
 .text
 song_of_storms:
@@ -35,3 +39,11 @@ d2_loop_end:
 f_loop:
 .incbin "../data/Ocarina_F_loop.bin"
 f_loop_end:
+
+nyan_cat:
+.incbin "../data/nyan-cat.bin"
+nyan_cat_end:
+
+low_battery_chirp:
+.incbin "../data/low_battery_chirp.bin"
+low_battery_chirp_end:
