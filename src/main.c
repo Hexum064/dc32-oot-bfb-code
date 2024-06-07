@@ -77,6 +77,17 @@
 #define PIO pio0
 
 extern uint8_t song_of_storms[];
+extern uint8_t bolero_of_fire[];
+extern uint8_t eponas_theme[];
+extern uint8_t minuet_of_forest[];
+extern uint8_t nocturne_of_shadow[];
+extern uint8_t prelude_of_light[];
+extern uint8_t requiem_of_spirit[];
+extern uint8_t sarias_song[];
+extern uint8_t serenade_of_water[];
+extern uint8_t song_of_time[];
+extern uint8_t suns_song[];
+extern uint8_t zeldas_lullaby[];
 extern uint8_t a_loop[];
 extern uint8_t b_loop[];
 extern uint8_t d_loop[];
