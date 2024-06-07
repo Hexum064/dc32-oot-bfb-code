@@ -76,6 +76,8 @@
 
 #define PIO pio0
 
+#define SONG_COUNT 12
+
 extern uint8_t song_of_storms[];
 extern uint8_t bolero_of_fire[];
 extern uint8_t eponas_theme[];
@@ -168,6 +170,13 @@ typedef enum notes
     no_note
 } notes;
 
+typedef struct note_song_map
+{
+    notes note_sequence[8];
+    uint8_t sequence_count;
+    uint8_t *song;
+} note_song_map;
+
 badge_mode mode = freeplay;
 badge_output_state output_state = none;
 bool active_note_buttons[] = {false, false, false, false, false};
@@ -211,7 +220,47 @@ repeating_timer_t rgb_led_timer;
 dma_channel_config rgb_led_dma_config;
 int rgb_led_dma_channel_number;
 
-int64_t pwm_mode_0()
+note_song_map map[] = {
+    {.note_sequence = {note_b, note_d2, note_a, note_b, note_d2, note_a, no_note, no_note},
+     .sequence_count = 6,
+     .song = zeldas_lullaby},
+    {.note_sequence = {note_d2, note_b, note_a, note_d2, note_b, note_a, no_note, no_note},
+     .sequence_count = 6,
+     .song = eponas_theme},
+    {.note_sequence = {note_f, note_a, note_b, note_f, note_a, note_b, no_note, no_note},
+     .sequence_count = 6,
+     .song = sarias_song},
+    {.note_sequence = {note_a, note_f, note_d2, note_a, note_f, note_d2, no_note, no_note},
+     .sequence_count = 6,
+     .song = suns_song},
+    {.note_sequence = {note_a, note_d, note_f, note_a, note_d, note_f, no_note, no_note},
+     .sequence_count = 6,
+     .song = song_of_time},
+    {.note_sequence = {note_d, note_f, note_d2, note_d, note_f, note_d2, no_note, no_note},
+     .sequence_count = 6,
+     .song = song_of_storms},
+    {.note_sequence = {note_d, note_d2, note_b, note_a, note_b, note_a, no_note, no_note},
+     .sequence_count = 6,
+     .song = minuet_of_forest},
+    {.note_sequence = {note_f, note_d, note_f, note_d, note_a, note_f, note_a, note_f},
+     .sequence_count = 8,
+     .song = bolero_of_fire},
+    {.note_sequence = {note_d, note_f, note_a, note_a, note_b},
+     .sequence_count = 5,
+     .song = serenade_of_water},
+    {.note_sequence = {note_b, note_a, note_a, note_d, note_b, note_a, note_f, no_note},
+     .sequence_count = 7,
+     .song = nocturne_of_shadow},
+    {.note_sequence = {note_d, note_f, note_d, note_a, note_f, note_d, no_note, no_note},
+     .sequence_count = 6,
+     .song = requiem_of_spirit},
+    {.note_sequence = {note_d2, note_a, note_d2, note_a, note_b, note_d2, no_note, no_note},
+     .sequence_count = 6,
+     .song = prelude_of_light}};
+
+uint8_t note_sequence_index = 0;
+
+uint64_t pwm_mode_0()
 {
     pwm_set_gpio_level(PWM_LED_0_GPIO, sineLookupTable[(led_pwm_lookup_index + 0x00) % SINE_TABLE_SIZE]);
     pwm_set_gpio_level(PWM_LED_1_GPIO, sineLookupTable[(led_pwm_lookup_index + 0x55) % SINE_TABLE_SIZE]);
@@ -335,30 +384,30 @@ bool rgb_leds_update_cb(repeating_timer_t *rt)
 
     if (output_state == play_note && current_note != no_note)
     {
-        //clear the last n LEDs
+        // clear the last n LEDs
         for (uint8_t i = 0; i < NOTE_COUNT; i++)
         {
             rgb_leds[RGB_LED_COUNT - i - 1] = 0;
         }
 
-        //then set one for the specific note
+        // then set one for the specific note
 
         switch (current_note)
         {
         case note_d:
-            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00008000; //red
+            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00008000; // red
             break;
-         case note_f:
-            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00308000; //yellow
+        case note_f:
+            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00308000; // yellow
             break;
         case note_a:
-            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00800000; //green
+            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00800000; // green
             break;
         case note_b:
-            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00000080; //blue
+            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00000080; // blue
             break;
         case note_d2:
-            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00008080; //purple
+            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00008080; // purple
             break;
         }
     }
@@ -423,7 +472,7 @@ void audio_dma_isr()
     // Clear the interrupt request.
     dma_hw->ints0 = 1u << audio_dma_channel_number;
 
-    if (!(output_state == play_note || output_state == play_nyan || output_state == battery_low))
+    if (!(output_state == play_note || output_state == play_nyan || output_state == battery_low || output_state == play_error || output_state == play_song))
     {
         return;
     }
@@ -438,7 +487,8 @@ void audio_dma_isr()
     current_buff_index++; // ok to wrap back to 0
     load_audio_buffer(current_sample, current_sample_len, &current_sample_offset, audio_buffs + (current_buff_index % 2), current_volume);
 
-    if (audio_buffs[current_buff_index % 2].length == 0)
+    //only repeat notes, nyan, and battery low
+    if (audio_buffs[current_buff_index % 2].length == 0 && (output_state == play_note || output_state == play_nyan || output_state == battery_low))
     {
         // Auto restart
         //  printf("Auto Restart\n");
@@ -585,8 +635,6 @@ void start_sample(uint8_t *sample)
     audio_dma_isr();
 }
 
-
-
 void change_mode()
 {
 
@@ -614,7 +662,7 @@ void update_oot_output()
         break;
     case play_note:
         start_sample((uint8_t *)(note_samples[current_note]));
-        break;    
+        break;
     default:
         break;
     }
@@ -635,7 +683,6 @@ void stop_sample()
 
     dma_channel_abort(audio_dma_channel_number);
 }
-
 
 // Only valid for Song mode
 void record_note_played(notes note)
@@ -658,8 +705,8 @@ void begin_play_note(notes note)
         return;
     }
 
-    //make sure the current sample is stopped
-  
+    // make sure the current sample is stopped
+
     current_note = note;
 
 #ifdef DEBUG
@@ -669,7 +716,6 @@ void begin_play_note(notes note)
     update_oot_output();
     record_note_played(note);
 }
-
 
 void note_buttons_state_changed()
 {
