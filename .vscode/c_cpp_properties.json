@@ -5,6 +5,7 @@
             "includePath": [
                 "${default}",
                 "${env:PICO_SDK_PATH}/src/**",
+                "${env:PICO_SDK_PATH}/src/rp2_common/pico_rand/include/pico/*",
                 "${env:PICO_EXTRAS_PATH}/src/**"
             ],
             "defines": [

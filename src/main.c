@@ -14,6 +14,7 @@
 #include "hardware/pwm.h"
 #include "i2s_32_441.pio.h"
 #include "ws2812b.pio.h"
+#include "rand.h"
 
 #define DEBUG
 
@@ -60,6 +61,7 @@
 
 #define RGB_LED_GPIO 13
 #define RGB_LED_COUNT 29
+#define RGB_LED_BOTTOM_COUNT 5
 #define RGB_LED_STATEMACHINE 1
 #define RGB_LED_UPDATE_DELAY_MS 50
 #define RGB_LED_DMA_DREQ DREQ_PIO0_TX1
@@ -78,6 +80,24 @@
 
 #define SONG_COUNT 12
 
+#define STANDBY_WHITE 0x00102010
+#define STANDBY_COLOR_FLASH_THRESH_LO 0x10000000
+#define STANDBY_COLOR_FLASH_THRESH_HI 0x40000000
+
+#define ERROR_COLOR 0x00004000
+#define ERROR_DELAY_CYCLES 2
+
+#define NYAN_DELAY_CYCLES 1
+#define NYAN_BOTTOM_COLOR 0x00000020
+#define NYAN_STAR_COLOR 0x00202020
+#define NYAN_STAR_RAND_THRESH 50
+
+#define SONG_ARRAY_COLOR_STEP 8
+#define SONG_OVERALL_COLOR_STEP 2
+#define SONG_OVERALL_MAX_STEPS (32 * SONG_OVERALL_COLOR_STEP)
+#define SONG_ARRAY_DELAY_CYCLES 2
+#define SONG_OVERALL_DELAY_CYCLES 3
+
 extern uint8_t song_of_storms[];
 extern uint8_t bolero_of_fire[];
 extern uint8_t eponas_theme[];
@@ -90,13 +110,30 @@ extern uint8_t serenade_of_water[];
 extern uint8_t song_of_time[];
 extern uint8_t suns_song[];
 extern uint8_t zeldas_lullaby[];
+extern uint8_t nyan_cat[];
+extern uint8_t low_battery_chirp[];
+
+// uint8_t song_of_storms[] = {0, 0, 0, 0, 0, 0, 0, 0};
+// uint8_t bolero_of_fire[] = {0, 0, 0, 0, 0, 0, 0, 0};
+// uint8_t eponas_theme[] = {0, 0, 0, 0, 0, 0, 0, 0};
+// uint8_t minuet_of_forest[] = {0, 0, 0, 0, 0, 0, 0, 0};
+// uint8_t nocturne_of_shadow[] = {0, 0, 0, 0, 0, 0, 0, 0};
+// uint8_t prelude_of_light[] = {0, 0, 0, 0, 0, 0, 0, 0};
+// uint8_t requiem_of_spirit[] = {0, 0, 0, 0, 0, 0, 0, 0};
+// uint8_t sarias_song[] = {0, 0, 0, 0, 0, 0, 0, 0};
+// uint8_t serenade_of_water[] = {0, 0, 0, 0, 0, 0, 0, 0};
+// uint8_t song_of_time[] = {0, 0, 0, 0, 0, 0, 0, 0};
+// uint8_t suns_song[] = {0, 0, 0, 0, 0, 0, 0, 0};
+// uint8_t zeldas_lullaby[] = {0, 0, 0, 0, 0, 0, 0, 0};
+// uint8_t nyan_cat[] = {0, 0, 0, 0, 0, 0, 0, 0};
+// uint8_t low_battery_chirp[] = {0, 0, 0, 0, 0, 0, 0, 0};
+
 extern uint8_t a_loop[];
 extern uint8_t b_loop[];
 extern uint8_t d_loop[];
 extern uint8_t d2_loop[];
 extern uint8_t f_loop[];
-extern uint8_t nyan_cat[];
-extern uint8_t low_battery_chirp[];
+extern uint8_t error[];
 
 const uint8_t *note_samples[] = {d_loop, f_loop, a_loop, b_loop, d2_loop};
 const uint16_t chaseLookupTable[] = {0, 0, 0xFFFF};
@@ -134,6 +171,41 @@ const uint16_t sineLookupTable[] = {
     0x3b48, 0x3df6, 0x40af, 0x4372, 0x463e, 0x4913, 0x4bf0, 0x4ed6,
     0x51c3, 0x54b7, 0x57b2, 0x5ab4, 0x5dbb, 0x60c7, 0x63d9, 0x66ef,
     0x6a08, 0x6d25, 0x7045, 0x7368, 0x768c, 0x79b2, 0x7cd9};
+
+const uint32_t rgb_colors[] = {
+    0x00800000, // green
+    0x00000080, // blue
+    0x00008000, // red
+    0x00308000, // yellow
+    0x00505050, // white
+    0x00004040, // purple
+};
+
+const uint32_t nyan_colors[] = {
+    0x007f0000,
+    0x007f2000,
+    0x007f4200,
+    0x007f6200,
+    0x007b7f00,
+    0x005b7f00,
+    0x00397f00,
+    0x00197f00,
+    0x00007f08,
+    0x00007f28,
+    0x00007f4a,
+    0x00007f6a,
+    0x0000737f,
+    0x0000537f,
+    0x0000317f,
+    0x0000117f,
+    0x0011007f,
+    0x0031007f,
+    0x0053007f,
+    0x0073007f,
+    0x007f006a,
+    0x007f004a,
+    0x007f0028,
+    0x007f0008};
 
 typedef struct audio_buff_t
 {
@@ -175,14 +247,13 @@ typedef struct note_song_map
     notes note_sequence[8];
     uint8_t sequence_count;
     uint8_t *song;
+    uint32_t base_color;
+    bool is_match; // used while testing note sequence
 } note_song_map;
 
 badge_mode mode = freeplay;
 badge_output_state output_state = none;
 bool active_note_buttons[] = {false, false, false, false, false};
-
-bool nayn_playing = false;
-bool battery_low_playing = false;
 
 audio_buff_t audio_buffs[AUDIO_BUFF_COUNT];
 
@@ -220,45 +291,91 @@ repeating_timer_t rgb_led_timer;
 dma_channel_config rgb_led_dma_config;
 int rgb_led_dma_channel_number;
 
+uint32_t standby_color_flash_ms = 0;
+bool standby_color_flash_active = false;
+uint32_t standby_current_flash_color = 0;
+uint8_t standby_color_flash_led_index = 0;
+
+uint32_t error_cycle_count = 0;
+bool error_show_color = false;
+
+uint32_t nyan_cycle_count = 0;
+uint8_t nyan_color_index = 0;
+
+uint32_t song_array_cycle_count = 0;
+uint32_t song_overall_cycle_count = 0;
+uint32_t song_overall_step_count = 0;
+uint8_t song_array_index_offset = 0;
+bool song_array_index_offset_dec = false;
+bool song_overall_step_dec = false;
+
 note_song_map map[] = {
     {.note_sequence = {note_b, note_d2, note_a, note_b, note_d2, note_a, no_note, no_note},
      .sequence_count = 6,
-     .song = zeldas_lullaby},
+     .song = zeldas_lullaby,
+     .base_color = 0x0000317f,
+     .is_match = true},
     {.note_sequence = {note_d2, note_b, note_a, note_d2, note_b, note_a, no_note, no_note},
      .sequence_count = 6,
-     .song = eponas_theme},
+     .song = eponas_theme,
+     .base_color = 0x006f7b00,
+     .is_match = true},
     {.note_sequence = {note_f, note_a, note_b, note_f, note_a, note_b, no_note, no_note},
      .sequence_count = 6,
-     .song = sarias_song},
+     .song = sarias_song,
+     .base_color = 0x00800000,
+     .is_match = true},
     {.note_sequence = {note_a, note_f, note_d2, note_a, note_f, note_d2, no_note, no_note},
      .sequence_count = 6,
-     .song = suns_song},
+     .song = suns_song,
+     .base_color = 0x00427f00,
+     .is_match = true},
     {.note_sequence = {note_a, note_d, note_f, note_a, note_d, note_f, no_note, no_note},
      .sequence_count = 6,
-     .song = song_of_time},
+     .song = song_of_time,
+     .base_color = 0x00007f6a,
+     .is_match = true},
     {.note_sequence = {note_d, note_f, note_d2, note_d, note_f, note_d2, no_note, no_note},
      .sequence_count = 6,
-     .song = song_of_storms},
+     .song = song_of_storms,
+     .base_color = 0x007f006a,
+     .is_match = true},
     {.note_sequence = {note_d, note_d2, note_b, note_a, note_b, note_a, no_note, no_note},
      .sequence_count = 6,
-     .song = minuet_of_forest},
+     .song = minuet_of_forest,
+     .base_color = 0x007f5b00,
+     .is_match = true},
     {.note_sequence = {note_f, note_d, note_f, note_d, note_a, note_f, note_a, note_f},
      .sequence_count = 8,
-     .song = bolero_of_fire},
+     .song = bolero_of_fire,
+     .base_color = 0x00008000,
+     .is_match = true},
     {.note_sequence = {note_d, note_f, note_a, note_a, note_b},
      .sequence_count = 5,
-     .song = serenade_of_water},
+     .song = serenade_of_water,
+     .base_color = 0x00000080,
+     .is_match = true},
     {.note_sequence = {note_b, note_a, note_a, note_d, note_b, note_a, note_f, no_note},
      .sequence_count = 7,
-     .song = nocturne_of_shadow},
+     .song = nocturne_of_shadow,
+     .base_color = 0x0031006f,
+     .is_match = true},
     {.note_sequence = {note_d, note_f, note_d, note_a, note_f, note_d, no_note, no_note},
      .sequence_count = 6,
-     .song = requiem_of_spirit},
+     .song = requiem_of_spirit,
+     .base_color = 0x00002f7f,
+     .is_match = true},
     {.note_sequence = {note_d2, note_a, note_d2, note_a, note_b, note_d2, no_note, no_note},
      .sequence_count = 6,
-     .song = prelude_of_light}};
+     .song = prelude_of_light,
+     .base_color = 0x00202020,
+     .is_match = true}};
 
 uint8_t note_sequence_index = 0;
+uint8_t *current_song = 0;
+uint32_t current_song_base_color;
+
+void update_oot_output();
 
 uint64_t pwm_mode_0()
 {
@@ -276,7 +393,7 @@ uint64_t pwm_mode_0()
         else
         {
 #ifdef DEBUG
-            printf("Ending mode 0\n");
+            printf("Ending pwm mode 0\n");
 #endif
             pwm_set_gpio_level(PWM_LED_0_GPIO, 0xFFFF);
             pwm_set_gpio_level(PWM_LED_1_GPIO, 0xFFFF);
@@ -307,7 +424,7 @@ int64_t pwm_mode_1()
         else
         {
 #ifdef DEBUG
-            printf("Ending mode 1\n");
+            printf("Ending pwm mode 1\n");
 #endif
             pwm_set_gpio_level(PWM_LED_0_GPIO, 0xFFFF);
             pwm_set_gpio_level(PWM_LED_1_GPIO, 0xFFFF);
@@ -338,7 +455,7 @@ int64_t pwm_mode_2()
         else
         {
 #ifdef DEBUG
-            printf("Ending mode 2\n");
+            printf("Ending pwm mode 2\n");
 #endif
             pwm_set_gpio_level(PWM_LED_0_GPIO, 0xFFFF);
             pwm_set_gpio_level(PWM_LED_1_GPIO, 0xFFFF);
@@ -370,17 +487,182 @@ void pwm_update_timer_init()
     alarm_id = alarm_pool_add_alarm_in_ms(core_0_alarm, pwm_delay, led_pwm_cb, 0, true);
 }
 
+uint32_t darken_color(uint32_t color, uint8_t amt)
+{
+    uint8_t r = (color >> 8) & 0xFF;
+    uint8_t g = (color >> 16) & 0xFF;
+    ;
+    uint8_t b = (color >> 0) & 0xFF;
+    ;
+
+    r = (r < amt ? 0 : r - amt);
+    g = (g < amt ? 0 : g - amt);
+    b = (b < amt ? 0 : b - amt);
+
+    return (uint32_t)(g << 16) + (uint32_t)(r << 8) + (uint32_t)(b << 0);
+}
+
+void rgb_led_song_update()
+{
+    // generate led colors from current_song_base_color
+
+    if (song_array_cycle_count >= SONG_ARRAY_DELAY_CYCLES)
+    {
+        song_array_cycle_count = 0;
+        for (uint8_t i = 0; i < RGB_LED_COUNT - RGB_LED_BOTTOM_COUNT - 1; i++)
+        {
+            rgb_leds[i] = darken_color(current_song_base_color, (SONG_ARRAY_COLOR_STEP * (i < song_array_index_offset ? song_array_index_offset - i : i - song_array_index_offset)));
+        }
+
+        song_array_index_offset = (song_array_index_offset_dec ? song_array_index_offset - 1 : song_array_index_offset + 1);
+
+        if (song_array_index_offset == (RGB_LED_COUNT - RGB_LED_BOTTOM_COUNT - 1))
+        {
+            song_array_index_offset_dec = true;
+        }
+        if (song_array_index_offset == 0)
+        {
+            song_array_index_offset_dec = false;
+        }
+    }
+
+    if (song_overall_cycle_count >= SONG_OVERALL_DELAY_CYCLES)
+    {
+        song_overall_cycle_count = 0;
+        for (uint8_t i = (RGB_LED_COUNT - RGB_LED_BOTTOM_COUNT); i < RGB_LED_COUNT; i++)
+        {
+            rgb_leds[i] = darken_color(current_song_base_color, song_overall_step_count);
+        }
+
+        song_overall_step_count = (song_overall_step_dec ? song_overall_step_count - SONG_OVERALL_COLOR_STEP : song_overall_step_count + SONG_OVERALL_COLOR_STEP);
+
+        if (song_overall_step_count >= SONG_OVERALL_MAX_STEPS)
+        {
+            song_overall_step_dec = true;
+        }
+
+        if (song_overall_step_count == 0)
+        {
+            song_overall_step_dec = false;
+        }
+    }
+
+    song_array_cycle_count++;
+    song_overall_cycle_count++;
+}
+
+void rgb_led_nyan_update()
+{
+    if (nyan_cycle_count >= NYAN_DELAY_CYCLES)
+    {
+
+        uint8_t star = (get_rand_32() % NYAN_STAR_RAND_THRESH);
+        for (uint8_t i = 0; i < RGB_LED_COUNT; i++)
+        {
+            if (i < RGB_LED_COUNT - RGB_LED_BOTTOM_COUNT)
+            {
+                rgb_leds[i] = nyan_colors[(i + nyan_color_index) % (RGB_LED_COUNT - RGB_LED_BOTTOM_COUNT)];
+            }
+            else
+            {
+                if (i == star)
+                {
+                    rgb_leds[i] = NYAN_STAR_COLOR;
+                }
+                else
+                {
+                    rgb_leds[i] = NYAN_BOTTOM_COLOR;
+                }
+            }
+        }
+        nyan_color_index++;
+        nyan_cycle_count = 0;
+    }
+
+    nyan_cycle_count++;
+}
+
+void rgb_leds_error_update()
+{
+    if (error_show_color)
+    {
+        for (uint8_t i = 0; i < RGB_LED_COUNT; i++)
+        {
+            rgb_leds[i] = ERROR_COLOR;
+        }
+    }
+    else
+    {
+        for (uint8_t i = 0; i < RGB_LED_COUNT; i++)
+        {
+            rgb_leds[i] = 0;
+        }
+    }
+
+    if (error_cycle_count >= ERROR_DELAY_CYCLES)
+    {
+        error_cycle_count = 0;
+        error_show_color = !error_show_color;
+    }
+
+    error_cycle_count++;
+}
+
+void rgb_leds_standby_update()
+{
+    if (!standby_color_flash_active)
+    {
+        standby_color_flash_ms = ((get_rand_32() % 10) + 1) * 1000; //((0 to 9) + 1) * 1000
+        standby_current_flash_color = rgb_colors[(get_rand_32() % 6)];
+        standby_color_flash_active = true;
+        standby_color_flash_led_index = 0;
+    }
+
+    for (uint8_t i = 0; i < RGB_LED_COUNT; i++)
+    {
+        rgb_leds[i] = STANDBY_WHITE;
+    }
+
+    if (standby_color_flash_ms <= RGB_LED_UPDATE_DELAY_MS)
+    {
+        if (standby_color_flash_led_index == RGB_LED_COUNT)
+        {
+            // put the last one back to white
+            rgb_leds[RGB_LED_COUNT - 1] = STANDBY_WHITE;
+            standby_color_flash_active = false;
+            return;
+        }
+        // need to also sequence the color through the LED array before getting the next timing.
+        rgb_leds[standby_color_flash_led_index++] = standby_current_flash_color;
+    }
+    else
+    {
+        standby_color_flash_ms -= RGB_LED_UPDATE_DELAY_MS;
+    }
+}
+
 bool rgb_leds_update_cb(repeating_timer_t *rt)
 {
 
-    // TEST CODE
-    static uint8_t blue = 0;
-    for (uint i = 0; i < RGB_LED_COUNT; i++)
+    switch (output_state)
     {
-        rgb_leds[i] = 0x00003F00 + (blue % 128);
+    case none:
+    case play_note:
+    case battery_low:
+        rgb_leds_standby_update();
+        break;
+    case play_nyan:
+        rgb_led_nyan_update();
+        break;
+    case play_song:
+        rgb_led_song_update();
+        break;
+    case play_error:
+        rgb_leds_error_update();
+        break;
+    default:
+        break;
     }
-    blue++;
-    // END TEST
 
     if (output_state == play_note && current_note != no_note)
     {
@@ -431,7 +713,7 @@ bool rgb_leds_update_cb(repeating_timer_t *rt)
 void load_audio_buffer(uint8_t *src, uint32_t src_len, uint32_t *src_offset, audio_buff_t *buff, uint8_t volume)
 {
 
-    if (!(output_state == play_note || output_state == play_nyan || output_state == battery_low))
+    if (!(output_state == play_note || output_state == play_nyan || output_state == battery_low || output_state == play_error || output_state == play_song))
     {
         buff->length = 0;
         return;
@@ -474,6 +756,7 @@ void audio_dma_isr()
 
     if (!(output_state == play_note || output_state == play_nyan || output_state == battery_low || output_state == play_error || output_state == play_song))
     {
+        current_song = 0; // clear the pointer
         return;
     }
 
@@ -487,13 +770,23 @@ void audio_dma_isr()
     current_buff_index++; // ok to wrap back to 0
     load_audio_buffer(current_sample, current_sample_len, &current_sample_offset, audio_buffs + (current_buff_index % 2), current_volume);
 
-    //only repeat notes, nyan, and battery low
-    if (audio_buffs[current_buff_index % 2].length == 0 && (output_state == play_note || output_state == play_nyan || output_state == battery_low))
+    // only repeat notes, nyan, and battery low
+    if (audio_buffs[current_buff_index % 2].length == 0)
     {
-        // Auto restart
-        //  printf("Auto Restart\n");
-        current_sample_offset = current_sample_loop_offset + 4;
-        load_audio_buffer(current_sample, current_sample_len, &current_sample_offset, audio_buffs + (current_buff_index % 2), current_volume);
+        // repeats indef and something else stops it
+        if (output_state == play_note || output_state == play_nyan || output_state == battery_low)
+        { // Auto restart
+            //  printf("Auto Restart\n");
+            current_sample_offset = current_sample_loop_offset + 4;
+            load_audio_buffer(current_sample, current_sample_len, &current_sample_offset, audio_buffs + (current_buff_index % 2), current_volume);
+        }
+
+        // Does not repeat and needs to signal end
+        if (output_state == play_song || output_state == play_error)
+        {
+            output_state = none;
+            update_oot_output();
+        }
     }
 }
 
@@ -516,9 +809,11 @@ void oot_gpio_init()
     gpio_set_function(PWM_LED_1_GPIO, GPIO_FUNC_PWM);
     gpio_set_function(PWM_LED_2_GPIO, GPIO_FUNC_PWM);
 
-    // init led data pins as output
-
-    // init i2s pins as output
+    // init led mode pins as output
+    gpio_init(MODE_LED_0_GPIO);
+    gpio_init(MODE_LED_1_GPIO);
+    gpio_set_dir(MODE_LED_0_GPIO, true);
+    gpio_set_dir(MODE_LED_1_GPIO, true);
 }
 
 void alarm_pool_init()
@@ -635,14 +930,45 @@ void start_sample(uint8_t *sample)
     audio_dma_isr();
 }
 
-void change_mode()
+void reset_sequence_matches()
 {
+#ifdef DEBUG
+    printf("Reseting maps\n");
+#endif
 
+    note_sequence_index = 0;
+    for (uint8_t i = 0; i < SONG_COUNT; i++)
+    {
+        map[i].is_match = true;
+    }
+}
+
+void change_mode(badge_mode new_mode)
+{
+    reset_sequence_matches();
     // currently only two modes so just switch between them
-    mode = (mode + 1) % 2;
+    mode = new_mode;
 #ifdef DEBUG
     printf("Changed mode. %d\n", mode);
 #endif
+
+    switch (mode)
+    {
+    case freeplay:
+#ifdef DEBUG
+        printf("freeplay\n", mode);
+#endif
+        gpio_put(MODE_LED_0_GPIO, true);
+        gpio_put(MODE_LED_1_GPIO, false);
+        break;
+    case song:
+#ifdef DEBUG
+        printf("song\n", mode);
+#endif
+        gpio_put(MODE_LED_1_GPIO, true);
+        gpio_put(MODE_LED_0_GPIO, false);
+        break;
+    }
 }
 
 // Update audio and RGB LED output based on current output_state
@@ -655,14 +981,24 @@ void update_oot_output()
     switch (output_state)
     {
     case play_nyan:
+        reset_sequence_matches();
         start_sample(nyan_cat);
         break;
     case battery_low:
+        reset_sequence_matches();
         start_sample(low_battery_chirp);
         break;
     case play_note:
         start_sample((uint8_t *)(note_samples[current_note]));
         break;
+    case play_song:
+        if (current_song)
+        {
+            start_sample(current_song);
+        }
+        break;
+    case play_error:
+        start_sample(error);
     default:
         break;
     }
@@ -671,9 +1007,6 @@ void update_oot_output()
 // We only play one note or sample at a time so this can end any active audio
 void stop_sample()
 {
-
-    // housekeeping. clear the note
-    current_note = no_note;
 
 #ifdef DEBUG
     printf("stop sample\n");
@@ -685,16 +1018,67 @@ void stop_sample()
 }
 
 // Only valid for Song mode
-void record_note_played(notes note)
+void check_note_sequence(notes note)
 {
+    bool has_match = false;
+
     if (mode != song)
     {
+#ifdef DEBUG
+        printf("sequence not checked\n");
+#endif
         return;
     }
 
 #ifdef DEBUG
-    printf("record note played: %d\n", note);
+    printf("sequence note played: %d\n", note);
 #endif
+
+    for (uint8_t i = 0; i < SONG_COUNT; i++)
+    {
+        if (map[i].note_sequence[note_sequence_index] != note)
+        {
+
+            // clear the true flag if we find a note that doesn't match
+            map[i].is_match = false;
+        }
+
+        if (map[i].sequence_count - 1 == note_sequence_index && map[i].is_match)
+        {
+#ifdef DEBUG
+            printf("Matched for map %d\n", i);
+#endif
+            // we found the match so reset and play the song
+            reset_sequence_matches();
+            current_note = 0;
+            output_state = play_song;
+            current_song = map[i].song;
+            current_song_base_color = map[i].base_color;
+            update_oot_output();
+            return;
+        }
+
+        if (map[i].is_match)
+        {
+#ifdef DEBUG
+            printf("has matched for map %d. seq index: %d\n", i, note_sequence_index);
+#endif
+            has_match = true;
+        }
+    }
+
+    note_sequence_index++;
+
+    if (!has_match)
+    {
+#ifdef DEBUG
+        printf("No match found. Playing error\n");
+#endif
+        reset_sequence_matches();
+        current_note = 0;
+        output_state = play_error;
+        update_oot_output();
+    }
 }
 
 void begin_play_note(notes note)
@@ -714,7 +1098,7 @@ void begin_play_note(notes note)
 #endif
     output_state = play_note;
     update_oot_output();
-    record_note_played(note);
+    check_note_sequence(note);
 }
 
 void note_buttons_state_changed()
@@ -753,8 +1137,13 @@ void note_buttons_state_changed()
         }
     }
 
-    // if we reached here, no note was active
-    stop_sample();
+    // housekeeping. clear the note
+    current_note = no_note;
+    // if we reached here, no note or song was active
+    if (!(output_state == play_error || output_state == play_song))
+    {
+        stop_sample();
+    }
 }
 
 // converts the pressed button GPIOs into an 8-bit mask
@@ -853,7 +1242,7 @@ void check_mode_button()
             printf("mode button debounced\n");
 #endif
 
-            change_mode();
+            change_mode((mode + 1) % 2);
 
             // also stop any output because we changed mode
             output_state = none;
@@ -875,6 +1264,7 @@ int main()
     led_pwm_init();
     rgb_leds_init();
     audio_init(); // make second core
+    change_mode(freeplay);
 
 #ifdef DEBUG
     sleep_ms(5000);

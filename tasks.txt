@@ -23,3 +23,53 @@ Puzzle? Maybe. TBD
 
 MAYBE! Nayn mode is entered from sequence of notes played
 
+
+
+song_of_storms = cyan
+bolero_of_fire = red
+eponas_theme = yellow
+minuet_of_forest = light green
+nocturne_of_shadow = dark blue
+prelude_of_light = white
+requiem_of_spirit = brown
+sarias_song = green
+serenade_of_water = blue
+song_of_time = light purple
+suns_song = orange
+zeldas_lullaby = purple
+
+nyan_cat = rainbow cycle with blue bottom
+
+low_battery_chirp = (standby)
+
+error = flash red
+
+standby = dim white highlight with random color streak of green, blue, red, yellow, purple
+    maybe: fade dark-light-dark for green, blue, red, yellow, white, purple
+
+0x00ff0000,
+0x00ff4000,
+0x00ff8400,
+0x00ffc400,
+0x00f7ff00,
+0x00b7ff00,
+0x0073ff00,
+0x0033ff00,
+0x0000ff11,
+0x0000ff51,
+0x0000ff95,
+0x0000ffd5,
+0x0000e6ff,
+0x0000a6ff,
+0x000062ff,
+0x000022ff,
+0x002200ff,
+0x006200ff,
+0x00a600ff,
+0x00e600ff,
+0x00ff00d5,
+0x00ff0095,
+0x00ff0051,
+0x00ff0011
+
+

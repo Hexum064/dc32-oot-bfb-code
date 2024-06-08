@@ -32,6 +32,8 @@ pico_generate_pio_header(oot-bfb-rp2040 ${CMAKE_CURRENT_LIST_DIR}/src/ws2812b.pi
 target_sources(oot-bfb-rp2040 PUBLIC
     ./src/main.c
     ./src/data.S
+    ./src/rand.c
+    ./src/rand.h
 )
 
 target_link_libraries(oot-bfb-rp2040
