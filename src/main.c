@@ -93,10 +93,10 @@
 #define NYAN_STAR_RAND_THRESH 50
 
 #define SONG_ARRAY_COLOR_STEP 8
-#define SONG_OVERALL_COLOR_STEP 2
-#define SONG_OVERALL_MAX_STEPS (32 * SONG_OVERALL_COLOR_STEP)
+#define SONG_OVERALL_COLOR_STEP 1
+#define SONG_OVERALL_MAX_STEPS (30 * SONG_OVERALL_COLOR_STEP)
 #define SONG_ARRAY_DELAY_CYCLES 2
-#define SONG_OVERALL_DELAY_CYCLES 3
+#define SONG_OVERALL_DELAY_CYCLES 1
 
 extern uint8_t song_of_storms[];
 extern uint8_t bolero_of_fire[];
@@ -509,7 +509,7 @@ void rgb_led_song_update()
     if (song_array_cycle_count >= SONG_ARRAY_DELAY_CYCLES)
     {
         song_array_cycle_count = 0;
-        for (uint8_t i = 0; i < RGB_LED_COUNT - RGB_LED_BOTTOM_COUNT - 1; i++)
+        for (uint8_t i = 0; i < RGB_LED_COUNT - RGB_LED_BOTTOM_COUNT; i++)
         {
             rgb_leds[i] = darken_color(current_song_base_color, (SONG_ARRAY_COLOR_STEP * (i < song_array_index_offset ? song_array_index_offset - i : i - song_array_index_offset)));
         }
