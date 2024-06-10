@@ -60,7 +60,7 @@
 #define MODE_LED_1_GPIO 12
 
 #define RGB_LED_GPIO 13
-#define RGB_LED_COUNT 29
+#define RGB_LED_COUNT 32
 #define RGB_LED_BOTTOM_COUNT 5
 #define RGB_LED_STATEMACHINE 1
 #define RGB_LED_UPDATE_DELAY_MS 50
@@ -87,6 +87,7 @@
 #define ERROR_COLOR 0x00004000
 #define ERROR_DELAY_CYCLES 2
 
+#define NAYN_COLOR_COUNT 24
 #define NYAN_DELAY_CYCLES 1
 #define NYAN_BOTTOM_COLOR 0x00000020
 #define NYAN_STAR_COLOR 0x00202020
@@ -561,7 +562,7 @@ void rgb_led_nyan_update()
         {
             if (i < RGB_LED_COUNT - RGB_LED_BOTTOM_COUNT)
             {
-                rgb_leds[i] = nyan_colors[(i + nyan_color_index) % (RGB_LED_COUNT - RGB_LED_BOTTOM_COUNT)];
+                rgb_leds[i] = nyan_colors[(i + nyan_color_index) % (NAYN_COLOR_COUNT)];
             }
             else
             {
