@@ -16,7 +16,7 @@
 #include "ws2812b.pio.h"
 #include "rand.h"
 
-#define DEBUG
+// #define DEBUG
 
 #define ALARM_1_NUM 0
 #define ALARM_1_IRQ TIMER_IRQ_0
@@ -24,10 +24,6 @@
 #define ALARM_2_NUM 1
 #define ALARM_2_IRQ TIMER_IRQ_1
 
-#define SAMPLE_RATE 44100UL
-#define BITS_PER_SAMPLE 32
-#define SPI_CLK_DIVISOR 90
-#define SPI_FREQ (SAMPLE_RATE * BITS_PER_SAMPLE)
 #define PICO_CLK_KHZ 133000UL // ((SPI_FREQ * SPI_CLK_DIVISOR) / 1000)
 #define AUDIO_BUFF_COUNT 2
 #define AUDIO_BUFF_SIZE 1024UL // Size of max Ocarina
@@ -70,7 +66,7 @@
 #define MODE_HOLD_US 4000000ULL
 
 #define FIRST_NYAN_NOTE 0
-#define SECOND_NYAN_NOTE 4
+#define SECOND_NYAN_NOTE 1
 
 #define PWM_INITIAL_DELAY_US 4000ULL
 #define PWM_FULL_DUTY_DELAY_US 2000000ULL
@@ -485,7 +481,7 @@ int64_t led_pwm_cb(alarm_id_t id, void *user_data)
 
 void pwm_update_timer_init()
 {
-    alarm_id = alarm_pool_add_alarm_in_ms(core_0_alarm, pwm_delay, led_pwm_cb, 0, true);
+    alarm_id = alarm_pool_add_alarm_in_us(core_0_alarm, pwm_delay, led_pwm_cb, 0, true);
 }
 
 uint32_t darken_color(uint32_t color, uint8_t amt)
@@ -1258,7 +1254,9 @@ void check_mode_button()
 int main()
 {
     set_sys_clock_khz(PICO_CLK_KHZ, true);
+#ifdef DEBUG    
     stdio_init_all();
+#endif
     alarm_pool_init();
     oot_gpio_init();
     vol_adc_init();
@@ -1269,9 +1267,10 @@ int main()
 
 #ifdef DEBUG
     sleep_ms(5000);
+    printf("OOT Pico Badge Started\n");
 #endif
 
-    printf("OOT Pico Badge Started\n");
+
 
     while (1)
     {
