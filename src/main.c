@@ -90,7 +90,7 @@
 #define ERROR_COLOR 0x00004000
 #define ERROR_DELAY_CYCLES 2
 
-#define NAYN_COLOR_COUNT 24
+#define NYAN_COLOR_COUNT 24
 #define NYAN_DELAY_CYCLES 1
 #define NYAN_BOTTOM_COLOR 0x00000020
 #define NYAN_STAR_COLOR 0x00202020
@@ -119,21 +119,6 @@ extern uint8_t low_battery_chirp[];
 extern uint8_t game_hint[];
 extern uint8_t konami_hint[];
 extern uint8_t rick_roll_hint[];
-
-// uint8_t song_of_storms[] = {0, 0, 0, 0, 0, 0, 0, 0};
-// uint8_t bolero_of_fire[] = {0, 0, 0, 0, 0, 0, 0, 0};
-// uint8_t eponas_theme[] = {0, 0, 0, 0, 0, 0, 0, 0};
-// uint8_t minuet_of_forest[] = {0, 0, 0, 0, 0, 0, 0, 0};
-// uint8_t nocturne_of_shadow[] = {0, 0, 0, 0, 0, 0, 0, 0};
-// uint8_t prelude_of_light[] = {0, 0, 0, 0, 0, 0, 0, 0};
-// uint8_t requiem_of_spirit[] = {0, 0, 0, 0, 0, 0, 0, 0};
-// uint8_t sarias_song[] = {0, 0, 0, 0, 0, 0, 0, 0};
-// uint8_t serenade_of_water[] = {0, 0, 0, 0, 0, 0, 0, 0};
-// uint8_t song_of_time[] = {0, 0, 0, 0, 0, 0, 0, 0};
-// uint8_t suns_song[] = {0, 0, 0, 0, 0, 0, 0, 0};
-// uint8_t zeldas_lullaby[] = {0, 0, 0, 0, 0, 0, 0, 0};
-// uint8_t nyan_cat[] = {0, 0, 0, 0, 0, 0, 0, 0};
-// uint8_t low_battery_chirp[] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 extern uint8_t a_loop[];
 extern uint8_t b_loop[];
@@ -186,6 +171,7 @@ const uint32_t rgb_colors[] = {
     0x00308000, // yellow
     0x00505050, // white
     0x00004040, // purple
+    0x00040040, // cyan
 };
 
 const uint32_t nyan_colors[] = {
@@ -235,10 +221,16 @@ typedef enum badge_output_state
     play_note,
     play_error,
     play_song,
-    start_puzzle,
-    mid_puzzle,
-    end_puzzle
+    play_puzzle,
 } badge_output_state;
+
+typedef enum badge_puzzle_mode
+{
+    puzzle_none,
+    puzzle_start,
+    puzzle_mid,
+    puzzle_end
+} badge_puzzle_mode;
 
 // Leave no_note at the end so the notes are 0-based
 // and can be used as indexes
@@ -263,6 +255,7 @@ typedef struct note_song_map
 
 badge_mode mode = freeplay;
 badge_output_state output_state = none;
+badge_puzzle_mode puzzle_mode = none;
 bool active_note_buttons[] = {false, false, false, false, false};
 
 audio_buff_t audio_buffs[AUDIO_BUFF_COUNT];
@@ -382,8 +375,8 @@ note_song_map map[] = {
      .sequence_count = 6,
      .song = prelude_of_light,
      .base_color = 0x00202020,
-     .is_match = true},    
-     };
+     .is_match = true},
+};
 
 uint8_t note_sequence_index = 0;
 uint8_t *current_song = 0;
@@ -575,7 +568,7 @@ void rgb_led_nyan_update()
         {
             if (i < RGB_LED_COUNT - RGB_LED_BOTTOM_COUNT)
             {
-                rgb_leds[i] = nyan_colors[(i + nyan_color_index) % (NAYN_COLOR_COUNT)];
+                rgb_leds[i] = nyan_colors[(i + nyan_color_index) % (NYAN_COLOR_COUNT)];
             }
             else
             {
@@ -665,37 +658,58 @@ void rgb_leds_all_off_update()
 
 void rgb_leds_puzzle_pattern_update()
 {
+    rgb_leds_all_off_update();
+
+    rgb_leds[0]  = STANDBY_WHITE;
+    rgb_leds[4]  = STANDBY_WHITE;
+    rgb_leds[5]  = STANDBY_WHITE;
+    rgb_leds[7]  = rgb_colors[0];
+    rgb_leds[9]  = rgb_colors[1];
+    rgb_leds[11]  = rgb_colors[2];
+    rgb_leds[13]  = rgb_colors[2];
+    rgb_leds[15]  = rgb_colors[1];
+    rgb_leds[17]  = rgb_colors[0];
+    rgb_leds[19]  = rgb_colors[1];        
+    rgb_leds[21]  = rgb_colors[0];
+    rgb_leds[23]  = rgb_colors[2];
 
 }
 
 bool rgb_leds_update_cb(repeating_timer_t *rt)
 {
 
-    switch (output_state)
+    if (mode == puzzle)
     {
-    case none:
-    case play_note:
-    case battery_low:
-        rgb_leds_standby_update();
-        break;
-    case play_nyan:
-        rgb_led_nyan_update();
-        break;
-    case play_song:
-        rgb_led_song_update();
-        break;
-    case play_error:
-        rgb_leds_error_update();
-        break;
-    case start_puzzle:
-    case mid_puzzle:
-        rgb_leds_all_off_update();
-        break;
-    case end_puzzle:
-        rgb_leds_puzzle_pattern_update();
-        break;
-    default:
-        break;
+        if (puzzle_mode == puzzle_end)
+        {
+            rgb_leds_puzzle_pattern_update();
+        }
+        else
+        {
+            rgb_leds_all_off_update();
+        }
+    }
+    else
+    {
+        switch (output_state)
+        {
+        case none:
+        case play_note:
+        case battery_low:
+            rgb_leds_standby_update();
+            break;
+        case play_nyan:
+            rgb_led_nyan_update();
+            break;
+        case play_song:
+            rgb_led_song_update();
+            break;
+        case play_error:
+            rgb_leds_error_update();
+            break;
+        default:
+            break;
+        }
     }
 
     if (output_state == play_note && current_note != no_note)
@@ -747,7 +761,7 @@ bool rgb_leds_update_cb(repeating_timer_t *rt)
 void load_audio_buffer(uint8_t *src, uint32_t src_len, uint32_t *src_offset, audio_buff_t *buff, uint8_t volume)
 {
 
-    if (!(output_state == play_note || output_state == play_nyan || output_state == battery_low || output_state == play_error || output_state == play_song || output_state == start_puzzle || output_state == mid_puzzle || output_state == end_puzzle))
+    if (!(output_state == play_note || output_state == play_nyan || output_state == battery_low || output_state == play_error || output_state == play_song || output_state == play_puzzle))
     {
         buff->length = 0;
         return;
@@ -788,7 +802,7 @@ void audio_dma_isr()
     // Clear the interrupt request.
     dma_hw->ints0 = 1u << audio_dma_channel_number;
 
-    if (!(output_state == play_note || output_state == play_nyan || output_state == battery_low || output_state == play_error || output_state == play_song || output_state == start_puzzle || output_state == mid_puzzle || output_state == end_puzzle))
+    if (!(output_state == play_note || output_state == play_nyan || output_state == battery_low || output_state == play_error || output_state == play_song || output_state == play_puzzle))
     {
         current_song = 0; // clear the pointer
         return;
@@ -816,7 +830,7 @@ void audio_dma_isr()
         }
 
         // Does not repeat and needs to signal end
-        if (output_state == play_song || output_state == play_error || output_state == start_puzzle || output_state == mid_puzzle || output_state == end_puzzle)
+        if (output_state == play_song || output_state == play_error || output_state == play_puzzle)
         {
             output_state = none;
             update_oot_output();
@@ -1003,12 +1017,12 @@ void change_mode(badge_mode new_mode)
         gpio_put(MODE_LED_0_GPIO, false);
         break;
     case puzzle:
- #ifdef DEBUG
+#ifdef DEBUG
         printf("puzzle\n", mode);
 #endif
         gpio_put(MODE_LED_1_GPIO, true);
         gpio_put(MODE_LED_0_GPIO, true);
-        break;   
+        break;
     }
 }
 
@@ -1021,15 +1035,13 @@ void update_oot_output()
 
     switch (output_state)
     {
-    case start_puzzle:
-        change_mode(puzzle);
-        start_sample(rick_roll_hint);
+    case play_puzzle:
+        reset_sequence_matches();
+        start_sample(current_song);
         break;
-    case mid_puzzle:
-    case end_puzzle:
     case play_nyan:
         reset_sequence_matches();
-        start_sample(nyan_cat);        
+        start_sample(nyan_cat);
         break;
     case battery_low:
         reset_sequence_matches();
@@ -1071,46 +1083,56 @@ void check_note_sequence(notes note)
 
     if (mode == puzzle)
     {
-        #ifdef DEBUG
-        printf("Checking note %d for mode %d, state %d. Index: %d", note, mode, output_state, note_sequence_index);
-        #endif
+#ifdef DEBUG
+        printf("Checking note %d for mode %d, puzzle mode %d. Index: %d\n", note, mode, puzzle_mode, note_sequence_index);
+#endif
 
-        switch (output_state)
+        switch (puzzle_mode)
         {
-            case start_puzzle:
-                has_match = note == first_puzzle_note_map[note_sequence_index++];
-                if (has_match && note_sequence_index == FIRST_PUZZLE_NOTE_COUNT)
-                {
-                    reset_sequence_matches();
-                    current_note = 0;
-                    output_state = mid_puzzle;
-                    current_song = konami_hint;                    
-                    update_oot_output();
-                }
-            break;
-            case mid_puzzle:
-                has_match = note == second_puzzle_note_map[note_sequence_index++];
-                if (has_match && note_sequence_index == FIRST_PUZZLE_NOTE_COUNT)
-                {
-                    reset_sequence_matches();
-                    current_note = 0;
-                    output_state = end_puzzle;
-                    current_song = game_hint;                    
-                    update_oot_output();                    
-                }
-            break;
+        case puzzle_start:
+            has_match = note == first_puzzle_note_map[note_sequence_index++];
+            if (has_match && note_sequence_index == FIRST_PUZZLE_NOTE_COUNT)
+            {
 
+                reset_sequence_matches();
+                output_state = play_puzzle;
+                current_note = 0;
+                puzzle_mode = puzzle_mid;
+                current_song = konami_hint;
+                update_oot_output();
+            }
+            break;
+        case puzzle_mid:
+            has_match = note == second_puzzle_note_map[note_sequence_index++];
+            if (has_match && note_sequence_index == SECOND_PUZZLE_NOTE_COUNT)
+            {
+                reset_sequence_matches();
+                output_state = play_puzzle;
+                current_note = 0;
+                puzzle_mode = puzzle_end;
+                current_song = game_hint;
+                update_oot_output();
+            }
+            break;
+        case puzzle_end:
+            reset_sequence_matches();
+            current_note = 0;
+            output_state = none;
+            // always default back to freeplay
+            change_mode(freeplay);
+            update_oot_output();
+            return;
         }
 
         if (!has_match)
         {
-    #ifdef DEBUG
+#ifdef DEBUG
             printf("No match found for puzzle. Playing error\n");
-    #endif
+#endif
             reset_sequence_matches();
             current_note = 0;
             output_state = play_error;
-            //always default back to freeplay
+            // always default back to freeplay
             change_mode(freeplay);
             update_oot_output();
         }
@@ -1222,15 +1244,18 @@ void note_buttons_state_changed()
         return;
     }
 
-// This combo starts the puzzle
+    // This combo starts the puzzle
     if (active_note_buttons[FIRST_PUZZLE_NOTE] && active_note_buttons[SECOND_PUZZLE_NOTE] && active_note_buttons[THIRD_PUZZLE_NOTE])
     {
 
 #ifdef DEBUG
         printf("Starting puzzle\n");
 #endif
-        output_state = start_puzzle;
+        puzzle_mode = puzzle_start;
+        change_mode(puzzle);
+        output_state = play_puzzle;
         current_note = no_note;
+        current_song = rick_roll_hint;
         update_oot_output();
         return;
     }
@@ -1294,7 +1319,7 @@ void check_note_buttons()
         {
             // For special modes, like nyan mode, we don't want to update
             // call button state changed until a button is pressed again
-            if (active_note_buttons[i] && output_state != play_nyan && output_state != start_puzzle && output_state != mid_puzzle && output_state != end_puzzle)
+            if (active_note_buttons[i] && output_state != play_nyan && output_state != play_puzzle)
             {
                 // button was active but now is not so update status
                 active_note_buttons[i] = false;
@@ -1365,7 +1390,7 @@ void check_mode_button()
 int main()
 {
     set_sys_clock_khz(PICO_CLK_KHZ, true);
-#ifdef DEBUG    
+#ifdef DEBUG
     stdio_init_all();
 #endif
     alarm_pool_init();
@@ -1380,8 +1405,6 @@ int main()
     sleep_ms(5000);
     printf("OOT Pico Badge Started\n");
 #endif
-
-
 
     while (1)
     {
