@@ -16,7 +16,7 @@
 #include "ws2812b.pio.h"
 #include "rand.h"
 
-#define DEBUG
+// #define DEBUG
 
 #define ALARM_1_NUM 0
 #define ALARM_1_IRQ TIMER_IRQ_0
@@ -74,6 +74,8 @@
 
 #define FIRST_PUZZLE_NOTE_COUNT 3
 #define SECOND_PUZZLE_NOTE_COUNT 8
+
+#define MIN_PUZZLE_VOL 200
 
 #define PWM_INITIAL_DELAY_US 4000ULL
 #define PWM_FULL_DUTY_DELAY_US 2000000ULL
@@ -1245,7 +1247,7 @@ void note_buttons_state_changed()
     }
 
     // This combo starts the puzzle
-    if (active_note_buttons[FIRST_PUZZLE_NOTE] && active_note_buttons[SECOND_PUZZLE_NOTE] && active_note_buttons[THIRD_PUZZLE_NOTE])
+    if (active_note_buttons[FIRST_PUZZLE_NOTE] && active_note_buttons[SECOND_PUZZLE_NOTE] && active_note_buttons[THIRD_PUZZLE_NOTE] && current_volume > MIN_PUZZLE_VOL)
     {
 
 #ifdef DEBUG
