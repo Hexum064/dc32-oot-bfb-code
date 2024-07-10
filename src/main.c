@@ -16,7 +16,7 @@
 #include "ws2812b.pio.h"
 #include "rand.h"
 
-// #define DEBUG
+//  #define DEBUG
 
 #define ALARM_1_NUM 0
 #define ALARM_1_IRQ TIMER_IRQ_0
@@ -27,7 +27,8 @@
 #define PICO_CLK_KHZ 133000UL // ((SPI_FREQ * SPI_CLK_DIVISOR) / 1000)
 #define AUDIO_BUFF_COUNT 2
 #define AUDIO_BUFF_SIZE 1024UL // Size of max Ocarina
-#define MAX_VOL 254
+#define MAX_VOL 208
+#define MAX_VOL_SCALE ((float)MAX_VOL/256.0F)
 #define VOL_AVG 32
 #define AUDIO_STATEMACHINE 0
 #define AUDIO_DMA_DREQ DREQ_PIO0_TX0
@@ -75,7 +76,7 @@
 #define FIRST_PUZZLE_NOTE_COUNT 3
 #define SECOND_PUZZLE_NOTE_COUNT 8
 
-#define MIN_PUZZLE_VOL 200
+#define MIN_PUZZLE_VOL (200 * MAX_VOL_SCALE)
 
 #define PWM_INITIAL_DELAY_US 4000ULL
 #define PWM_FULL_DUTY_DELAY_US 2000000ULL
@@ -962,12 +963,13 @@ void check_volume()
 
         // and also filter to 2 steps
         volume -= (volume % 2);
-
+        volume *= MAX_VOL_SCALE;
+        
         if (volume != current_volume)
-        {
+        {            
             current_volume = volume;
 #ifdef DEBUG
-            printf("New Volume: %d\n", current_volume);
+            printf("New Volume: %d. Scale: %f\n", current_volume, MAX_VOL_SCALE);
 #endif
         }
     }
