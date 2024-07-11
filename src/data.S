@@ -38,6 +38,12 @@
 .global f_loop_end
 .global error
 .global error_end
+.global game_hint
+.global game_hint_end
+.global konami_hint
+.global konami_hint_end
+.global rick_roll_hint
+.global rick_roll_hint_end
 
 .text
 
@@ -122,3 +128,15 @@ f_loop_end:
 error:
 .incbin "../data/error.bin"
 error_end:
+
+game_hint:
+.incbin "../data/game-hint.bin"
+game_hint_end:
+
+konami_hint:
+.incbin "../data/konami-code-hint.bin"
+konami_hint_end:
+
+rick_roll_hint:
+.incbin "../data/rick-roll-hint.bin"
+rick_roll_hint_end:
