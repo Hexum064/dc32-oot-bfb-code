@@ -675,6 +675,7 @@ void rgb_leds_puzzle_pattern_update()
     rgb_leds[19]  = rgb_colors[1];        
     rgb_leds[21]  = rgb_colors[0];
     rgb_leds[23]  = rgb_colors[2];
+    rgb_leds[25]  = STANDBY_WHITE;
 
 }
 
@@ -728,19 +729,19 @@ bool rgb_leds_update_cb(repeating_timer_t *rt)
         switch (current_note)
         {
         case note_d:
-            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00008000; // red
+            rgb_leds[RGB_LED_COUNT - 1] = 0x00008000; // red
             break;
         case note_f:
-            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00308000; // yellow
+            rgb_leds[RGB_LED_COUNT - 5] = 0x00308000; // yellow
             break;
         case note_a:
-            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00800000; // green
+            rgb_leds[RGB_LED_COUNT - 4] = 0x00800000; // green
             break;
         case note_b:
-            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00000080; // blue
+            rgb_leds[RGB_LED_COUNT - 3] = 0x00000080; // blue
             break;
         case note_d2:
-            rgb_leds[RGB_LED_COUNT - current_note - 1] = 0x00008080; // purple
+            rgb_leds[RGB_LED_COUNT - 2] = 0x00008080; // purple
             break;
         }
     }
