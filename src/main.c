@@ -84,7 +84,7 @@
 
 #define PIO pio0
 
-#define SONG_COUNT 12
+#define SONG_COUNT 13
 
 #define STANDBY_WHITE 0x00102010
 #define STANDBY_COLOR_FLASH_THRESH_LO 0x10000000
@@ -122,6 +122,7 @@ extern uint8_t low_battery_chirp[];
 extern uint8_t game_hint[];
 extern uint8_t konami_hint[];
 extern uint8_t rick_roll_hint[];
+extern uint8_t dfiu[];
 
 extern uint8_t a_loop[];
 extern uint8_t b_loop[];
@@ -318,6 +319,8 @@ bool song_overall_step_dec = false;
 uint8_t first_puzzle_note_map[] = {note_d2, note_f, note_d, no_note, no_note, no_note, no_note, no_note};
 uint8_t second_puzzle_note_map[] = {note_d2, note_d2, note_f, note_f, note_b, note_a, note_b, note_a};
 
+//colors are GRB
+//Notes are up = d2, left = b, right = a, down = f, A = d
 note_song_map map[] = {
     {.note_sequence = {note_b, note_d2, note_a, note_b, note_d2, note_a, no_note, no_note},
      .sequence_count = 6,
@@ -379,6 +382,11 @@ note_song_map map[] = {
      .song = prelude_of_light,
      .base_color = 0x00202020,
      .is_match = true},
+    {.note_sequence = {note_d2, note_d2, note_d2, note_d2, no_note, no_note, no_note, no_note},
+     .sequence_count = 4,
+     .song = dfiu,
+     .base_color = 0x00320120,
+     .is_match = true},     
 };
 
 uint8_t note_sequence_index = 0;

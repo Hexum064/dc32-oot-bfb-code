@@ -44,6 +44,8 @@
 .global konami_hint_end
 .global rick_roll_hint
 .global rick_roll_hint_end
+.global dfiu
+.global dfiu_end
 
 .text
 
@@ -140,3 +142,7 @@ konami_hint_end:
 rick_roll_hint:
 .incbin "../data/rick-roll-hint.bin"
 rick_roll_hint_end:
+
+dfiu:
+.incbin "../data/dfiu.bin"
+dfiu_end:
